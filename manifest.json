@@ -1,0 +1,10 @@
+{
+  "id": "taskdoc-mcp",
+  "name": "TaskDoc MCP",
+  "version": "0.1.0-alpha.1",
+  "minAppVersion": "1.11.4",
+  "description": "Kanban-backed task checkpoint documents with an embedded MCP server.",
+  "author": "aleygey",
+  "authorUrl": "https://github.com/aleygey",
+  "isDesktopOnly": true
+}

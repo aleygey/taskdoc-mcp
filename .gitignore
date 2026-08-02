@@ -1,0 +1,10 @@
+node_modules/
+.npm-cache/
+main.js
+main.js.map
+dist/
+release/
+*.zip
+.DS_Store
+Thumbs.db
+coverage/

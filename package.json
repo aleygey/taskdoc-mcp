@@ -1,0 +1,29 @@
+{
+  "name": "taskdoc-mcp",
+  "version": "0.1.0-alpha.1",
+  "description": "Obsidian-native task checkpoint documents with an embedded MCP server.",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "package:release": "npm run build && node scripts/package-release.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "builtin-modules": "4.0.0",
+    "esbuild": "0.28.1",
+    "obsidian": "1.13.1",
+    "tsx": "4.23.4",
+    "typescript": "5.9.3"
+  }
+}
