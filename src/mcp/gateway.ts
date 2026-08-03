@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server as NodeHttpServer, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { isIP, type AddressInfo } from "node:net";
 import {
   StreamableHTTPServerTransport,
   type StreamableHTTPServerTransportOptions,
@@ -9,7 +9,8 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TaskApi } from "./api.js";
 import { McpServer, type McpServerOptions } from "./server.js";
 
-const BIND_HOST = "127.0.0.1";
+const DEFAULT_BIND_HOST = "127.0.0.1";
+const DEFAULT_CLIENT_HOST = "127.0.0.1";
 const DEFAULT_PATH = "/mcp";
 const MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
@@ -18,6 +19,8 @@ export type McpHttpGatewayOptions = McpServerOptions & {
   api: TaskApi;
   token: string;
   port: number;
+  bindHost?: string;
+  clientHost?: string;
   allowedOrigins?: readonly string[];
   path?: string;
   maxConcurrentRequests?: number;
@@ -25,7 +28,8 @@ export type McpHttpGatewayOptions = McpServerOptions & {
 
 export type McpHttpGatewayStatus = {
   running: boolean;
-  host: typeof BIND_HOST;
+  host: string;
+  client_host: string;
   port: number | null;
   endpoint: string | null;
   started_at: string | null;
@@ -50,6 +54,8 @@ export class McpHttpGateway {
   private readonly api: TaskApi;
   private readonly token: string;
   private readonly configuredPort: number;
+  private readonly bindHost: string;
+  private readonly clientHost: string;
   private readonly allowedOrigins: ReadonlySet<string>;
   private readonly path: string;
   private readonly mcpOptions: McpServerOptions;
@@ -78,6 +84,10 @@ export class McpHttpGateway {
     this.api = options.api;
     this.token = options.token;
     this.configuredPort = options.port;
+    this.bindHost = normalizeMcpBindHost(options.bindHost ?? DEFAULT_BIND_HOST);
+    this.clientHost = normalizeMcpClientHost(
+      options.clientHost ?? (isWildcardBindHost(this.bindHost) ? DEFAULT_CLIENT_HOST : this.bindHost),
+    );
     this.allowedOrigins = new Set((options.allowedOrigins ?? []).map(normalizeOrigin));
     this.path = options.path ?? DEFAULT_PATH;
     this.maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
@@ -91,9 +101,10 @@ export class McpHttpGateway {
     const running = this.nodeServer !== undefined && this.boundPort !== undefined;
     return {
       running,
-      host: BIND_HOST,
+      host: this.bindHost,
+      client_host: this.clientHost,
       port: running ? this.boundPort ?? null : null,
-      endpoint: running ? `http://${BIND_HOST}:${this.boundPort ?? 0}${this.path}` : null,
+      endpoint: running ? formatMcpEndpoint(this.clientHost, this.boundPort ?? 0, this.path) : null,
       started_at: running ? this.startedAt ?? null : null,
       active_requests: this.inflightRequests,
     };
@@ -111,7 +122,11 @@ export class McpHttpGateway {
       await new Promise<void>((resolve, reject) => {
         const onError = (error: Error): void => reject(error);
         nodeServer.once("error", onError);
-        nodeServer.listen(this.configuredPort, BIND_HOST, () => {
+        nodeServer.listen({
+          port: this.configuredPort,
+          host: this.bindHost,
+          ...(this.bindHost === "::" ? { ipv6Only: true } : {}),
+        }, () => {
           nodeServer.off("error", onError);
           resolve();
         });
@@ -161,7 +176,7 @@ export class McpHttpGateway {
         return;
       }
 
-      const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? BIND_HOST}`);
+      const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? DEFAULT_BIND_HOST}`);
       if (requestUrl.pathname !== this.path) {
         writeJsonError(response, 404, "Not found");
         return;
@@ -264,7 +279,10 @@ export class McpHttpGateway {
     if (hostHeader === undefined || this.boundPort === undefined) return false;
     try {
       const parsed = new URL(`http://${hostHeader}`);
-      const hostname = parsed.hostname.toLowerCase();
+      const parsedHostname = parsed.hostname.toLowerCase();
+      const hostname = parsedHostname.startsWith("[") && parsedHostname.endsWith("]")
+        ? parsedHostname.slice(1, -1)
+        : parsedHostname;
       const port = parsed.port === "" ? 80 : Number(parsed.port);
       return (
         parsed.username === "" &&
@@ -272,7 +290,7 @@ export class McpHttpGateway {
         parsed.pathname === "/" &&
         parsed.search === "" &&
         parsed.hash === "" &&
-        (hostname === BIND_HOST || hostname === "localhost") &&
+        (isIP(hostname) !== 0 || hostname === "localhost" || hostname === this.clientHost) &&
         port === this.boundPort
       );
     } catch {
@@ -305,6 +323,82 @@ function getSingleHeader(request: IncomingMessage, name: string): string | undef
 
 function normalizeOrigin(origin: string): string {
   return new URL(origin).origin;
+}
+
+export function normalizeMcpBindHost(input: string): string {
+  return normalizeMcpHost(input, "bindHost", true);
+}
+
+export function normalizeMcpClientHost(input: string): string {
+  const host = normalizeMcpHost(input, "clientHost", false);
+  if (isWildcardBindHost(host)) {
+    throw new TypeError("clientHost must be a reachable IP address or hostname, not a wildcard address");
+  }
+  return host;
+}
+
+export function formatMcpEndpoint(host: string, port: number, path = DEFAULT_PATH): string {
+  const normalizedHost = normalizeMcpClientHost(host);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new RangeError("port must be an integer between 0 and 65535");
+  }
+  if (!path.startsWith("/")) throw new TypeError("path must start with '/'");
+  const urlHost = isIP(normalizedHost) === 6 ? `[${normalizedHost}]` : normalizedHost;
+  return `http://${urlHost}:${port}${path}`;
+}
+
+function normalizeMcpHost(input: string, field: string, allowWildcard: boolean): string {
+  const trimmed = input.trim();
+  if (trimmed.length === 0 || trimmed.length > 253) throw new TypeError(`${field} must not be empty`);
+  const unwrapped = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  const ipVersion = isIP(unwrapped);
+  if (ipVersion !== 0) {
+    const normalizedIp = ipVersion === 6
+      ? new URL(`http://[${unwrapped}]`).hostname.slice(1, -1)
+      : unwrapped;
+    if (!allowWildcard && isWildcardBindHost(normalizedIp)) {
+      throw new TypeError(`${field} must not be a wildcard address`);
+    }
+    return normalizedIp.toLowerCase();
+  }
+
+  try {
+    const parsed = new URL(`http://${trimmed}`);
+    if (
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.port !== "" ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== "" ||
+      parsed.hostname.length === 0
+    ) {
+      throw new TypeError(`${field} must contain only an IP address or hostname`);
+    }
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+    const parsedIpVersion = isIP(hostname);
+    if (parsedIpVersion !== 0) {
+      const normalizedIp = parsedIpVersion === 6
+        ? new URL(`http://[${hostname}]`).hostname.slice(1, -1)
+        : hostname;
+      if (!allowWildcard && isWildcardBindHost(normalizedIp)) {
+        throw new TypeError(`${field} must not be a wildcard address`);
+      }
+      return normalizedIp;
+    }
+    const validDnsName = hostname.length <= 253 && hostname.split(".").every((label) =>
+      /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label),
+    );
+    if (!validDnsName) throw new TypeError(`${field} contains an invalid hostname`);
+    return hostname;
+  } catch (error) {
+    if (error instanceof TypeError && error.message.startsWith(field)) throw error;
+    throw new TypeError(`${field} must contain only an IP address or hostname`, { cause: error });
+  }
+}
+
+function isWildcardBindHost(host: string): boolean {
+  return host === "0.0.0.0" || host === "::";
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -345,7 +439,9 @@ function writeJsonError(response: ServerResponse, status: number, message: strin
 }
 
 export const mcpHttpGatewayDefaults = {
-  host: BIND_HOST,
+  host: DEFAULT_BIND_HOST,
+  bindHost: DEFAULT_BIND_HOST,
+  clientHost: DEFAULT_CLIENT_HOST,
   path: DEFAULT_PATH,
   maxBodyBytes: MAX_BODY_BYTES,
   maxConcurrentRequests: DEFAULT_MAX_CONCURRENT_REQUESTS,

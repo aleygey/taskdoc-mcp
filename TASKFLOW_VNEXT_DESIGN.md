@@ -693,13 +693,15 @@ card 使用完整 vault-relative wikilink，身份取链接文档的 `task_id`�
 
 安全默认值：
 
-- 默认只监听 `127.0.0.1`；
+- 默认只监听 `127.0.0.1`，但设置页可显式选择具体 Host-only/桥接/LAN 地址、`0.0.0.0` 或 `::`；
+- 监听地址（bind host）和客户端配置使用的可达地址（client host）分离；通配地址不能作为 client host，IPv6 URL 自动加方括号；
 - 首次启用生成随机 256-bit Bearer token；
-- 校验 Host，Origin 存在时必须位于 allowlist；
+- Host 必须格式合法且端口与实际监听端口一致；所有 IP literal 均可用，不设置来源 IP 白名单；DNS Host 只允许 `localhost` 或用户配置的 client host，以保留 DNS rebinding 防护；
+- Origin 存在时必须位于 allowlist；
 - 不返回 `Access-Control-Allow-Origin: *`；
 - 限制请求体、并发数和工具输出；
 - 日志不记录 token、完整 PHA comment 或完整任务文档；
-- WSL/VM 无法访问 loopback 时，优先使用一个极小 bridge；高级模式只能绑定用户明确选择的 host-only 网卡 IP，并强制 token/allowlist，不能默认 `0.0.0.0`。
+- 非回环监听始终强制 Bearer token，并在 UI 显著提示：HTTP 明文不会因 token 而加密；Host-only/桥接/LAN 场景应使用 Windows 防火墙限制可信 VM/网段，跨不可信网络需 TLS/VPN，不能直接暴露到公网。
 
 建议使用官方 TypeScript SDK 的无状态 Streamable HTTP，而不是迁移当前手写 JSON-RPC 子集。官方 SDK专门提供本地服务 Host/Origin 校验和 DNS rebinding 防护。[MCP TypeScript SDK](https://ts.sdk.modelcontextprotocol.io/server)
 

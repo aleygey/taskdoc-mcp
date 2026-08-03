@@ -1,3 +1,41 @@
+# TaskDoc MCP 0.1.0-alpha.2
+
+这是中文界面与接入说明更新，适合已经安装首个 alpha 的用户直接覆盖升级。
+
+## 本版更新
+
+- Obsidian 设置页、命令和通知改为中文，并为所有可见配置项补充用途、范围与风险说明。
+- 10 个 MCP 工具保留稳定英文工具名，但增加中文标题、写作协议和逐参数 JSON Schema 描述。
+- MCP 监听地址不再写死为 `127.0.0.1`：支持具体 Host-only/桥接/LAN 地址、`0.0.0.0` 和 `::`，并单独配置客户端可达地址。
+- 新增完整中文使用文档，说明已有看板登记、Z 盘/SMB 路径、跨 session 接续、任务文档结构和 PHA 目标映射。
+- 在设置页明确提示：扫描旧看板不会迁移旧任务文档；PHA adapter、comment、图片和附件同步当前仍未实现。
+- 中文看板列名可辅助推断校验 profile。
+
+## 升级
+
+下载 `taskdoc-mcp-0.1.0-alpha.2.zip`，覆盖 `<vault>/.obsidian/plugins/taskdoc-mcp/` 下的 `main.js`、`manifest.json` 和 `styles.css`，然后在 Obsidian 中重载插件。
+
+已有 `.obsidian/plugins/taskdoc-mcp/data.json` 不要删除，其中包含看板和列的稳定 ID。
+
+压缩包 SHA-256：`FFA1FF22722B42742260603F41D5B0DEE33965C9F7FD8ED57B2E7D42DE01EE43`
+
+## 重要兼容边界
+
+- 已有标准 Markdown 看板可逐个登记并扫描，当前不会自动发现整个 Vault。
+- 旧 win-console 任务文档还不能由新 MCP 直接管理，需要后续迁移器。
+- 旧卡片若链接子目录中的任务文档，`[[链接]]` 需要包含完整 Vault 相对路径。
+- 看板文件和任务目录只填 Vault 相对路径；不要填 `Z:\\...`、UNC/SMB URL 或虚拟机内部绝对路径。
+- PHA 配置仍为预留，不会产生真实 task/comment/附件同步。
+- 非回环监听仍为 HTTP；Token 负责认证但不加密流量，应配合 Windows 防火墙，跨不可信网络时使用 TLS/VPN。
+
+## 验证
+
+- TypeScript 类型检查通过。
+- 25 项自动化测试全部通过。
+- 生产 bundle 构建通过。
+
+---
+
 # TaskDoc MCP 0.1.0-alpha.1
 
 首个可安装测试版，将任务文档 MCP 从 `win-console` 拆成独立的 Obsidian 桌面插件。

@@ -1,7 +1,7 @@
 import { Notice, Plugin } from "obsidian";
 import { randomBytes } from "node:crypto";
 import { parseBoard } from "./kanban/index.js";
-import { McpHttpGateway } from "./mcp/index.js";
+import { formatMcpEndpoint, McpHttpGateway } from "./mcp/index.js";
 import { ObsidianVaultAdapter, safeVaultPath } from "./obsidian/vaultAdapter.js";
 import { TaskService } from "./service.js";
 import { DEFAULT_SETTINGS, TaskDocSettingTab } from "./settings.js";
@@ -31,16 +31,18 @@ export default class TaskDocPlugin extends Plugin {
 
     this.addCommand({
       id: "restart-mcp-server",
-      name: "Restart MCP server",
+      name: "重启 MCP 服务",
       callback: () => { void this.restartMcp(); }
     });
     this.addCommand({
       id: "copy-mcp-client-config",
-      name: "Copy MCP client configuration",
+      name: "复制 MCP 客户端配置",
       callback: () => {
         void this.clientConfig().then(async (config) => {
           await navigator.clipboard.writeText(config);
-          new Notice("TaskDoc MCP client configuration copied.");
+          new Notice("已复制 TaskDoc MCP 客户端配置。");
+        }).catch((error: unknown) => {
+          new Notice(error instanceof Error ? error.message : String(error));
         });
       }
     });
@@ -48,7 +50,7 @@ export default class TaskDocPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.initializeRuntime().catch((error: unknown) => {
         this.lastMcpError = error instanceof Error ? error.message : String(error);
-        new Notice(`TaskDoc MCP failed to initialize: ${this.lastMcpError}`);
+        new Notice(`TaskDoc MCP 初始化失败：${this.lastMcpError}`);
       });
     });
   }
@@ -80,6 +82,8 @@ export default class TaskDocPlugin extends Plugin {
       const gateway = new McpHttpGateway({
         api: service,
         token,
+        bindHost: this.settings.mcpBindHost,
+        clientHost: this.settings.mcpClientHost,
         port: this.settings.mcpPort,
         allowedOrigins: this.settings.allowedOrigins,
         name: "taskdoc-mcp",
@@ -95,7 +99,7 @@ export default class TaskDocPlugin extends Plugin {
     } catch (error) {
       this.lastMcpError = error instanceof Error ? error.message : String(error);
       this.gateway = undefined;
-      new Notice(`TaskDoc MCP failed to start: ${this.lastMcpError}`);
+      new Notice(`TaskDoc MCP 启动失败：${this.lastMcpError}`);
     }
   }
 
@@ -114,11 +118,12 @@ export default class TaskDocPlugin extends Plugin {
 
   async clientConfig(): Promise<string> {
     const token = await this.ensureMcpToken();
+    const url = mcpClientUrl(this.settings.mcpClientHost, this.settings.mcpPort);
     return JSON.stringify({
       mcp: {
         taskdoc: {
           type: "remote",
-          url: `http://127.0.0.1:${this.settings.mcpPort}/mcp`,
+          url,
           enabled: true,
           oauth: false,
           headers: { Authorization: `Bearer ${token}` }
@@ -202,16 +207,29 @@ export default class TaskDocPlugin extends Plugin {
   }
 }
 
+function mcpClientUrl(host: string, port: number): string {
+  const trimmed = host.trim();
+  if (trimmed.length === 0) throw new Error("客户端连接地址不能为空");
+  if (trimmed === "0.0.0.0" || trimmed === "::" || trimmed === "[::]") {
+    throw new Error("客户端连接地址必须是客户端可达的具体 IP 或主机名，不能使用监听通配地址");
+  }
+  try {
+    return formatMcpEndpoint(trimmed, port);
+  } catch {
+    throw new Error("客户端连接地址格式无效：请只填写 IPv4、IPv6 或主机名，不要包含协议、端口或路径");
+  }
+}
+
 function slug(value: string): string {
   return value.trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 64);
 }
 
 function guessProfile(typeId: string): ValidationProfile {
-  if (/bug|fix|故障|缺陷|问题/.test(typeId)) return "bug";
-  if (/feature|需求|功能/.test(typeId)) return "feature";
-  if (/research|investigat|调研|分析/.test(typeId)) return "research";
-  if (/migrat|迁移/.test(typeId)) return "migration";
-  if (/config|配置/.test(typeId)) return "configuration";
-  if (/maint|维护/.test(typeId)) return "maintenance";
+  if (/bug|fix|故障|缺陷|问题/i.test(typeId)) return "bug";
+  if (/feature|需求|功能/i.test(typeId)) return "feature";
+  if (/research|investigat|调研|分析/i.test(typeId)) return "research";
+  if (/migrat|迁移/i.test(typeId)) return "migration";
+  if (/config|配置/i.test(typeId)) return "configuration";
+  if (/maint|维护/i.test(typeId)) return "maintenance";
   return "other";
 }

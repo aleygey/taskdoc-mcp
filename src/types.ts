@@ -150,6 +150,8 @@ export interface PhaSettings {
 
 export interface TaskDocSettings {
   mcpEnabled: boolean;
+  mcpBindHost: string;
+  mcpClientHost: string;
   mcpPort: number;
   mcpTokenSecretKey: string;
   allowedOrigins: string[];
