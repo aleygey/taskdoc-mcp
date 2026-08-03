@@ -1,5 +1,7 @@
 # TaskDoc MCP
 
+[中文使用说明 / Chinese guide](./README.zh-CN.md)
+
 TaskDoc MCP is a desktop-only Obsidian plugin for Kanban-backed task checkpoint documents. It keeps long-term task records concise while preserving large tables, Mermaid diagrams, CP checklists, specifications, and test evidence as addressable rich blocks.
 
 This repository is an early test release extracted from the Taskflow design in [`win-console`](https://github.com/aleygey/win-console).
@@ -13,7 +15,7 @@ This repository is an early test release extracted from the Taskflow design in [
 - Store Markdown tables, Mermaid, domain checklists, configuration, specifications, and evidence as rich blocks up to 24,576 characters by default.
 - Write a mutable handoff capsule and resume a task without loading its full history or rich block bodies.
 - Move a card between type columns and synchronize its checkbox completion state.
-- Run a token-authenticated Streamable HTTP MCP endpoint on `127.0.0.1`.
+- Run a token-authenticated Streamable HTTP MCP endpoint on loopback, a specific VM/LAN adapter, or all IPv4/IPv6 interfaces.
 - Configure boards, MCP, document budgets, and diagnostics from the Obsidian plugin settings page.
 
 PHA synchronization is intentionally unavailable in this alpha. The adapter/outbox boundary and settings placeholder are included, but a real implementation requires the concrete PHA task/comment API, especially comment update semantics.
@@ -28,7 +30,7 @@ Do not enable the old `win-console` Taskflow writer and TaskDoc MCP against the 
 
 ## Install from a release
 
-1. Download `taskdoc-mcp-0.1.0-alpha.1.zip` from the GitHub Release.
+1. Download `taskdoc-mcp-0.1.0-alpha.2.zip` from the GitHub Release.
 2. Extract it to `<vault>/.obsidian/plugins/taskdoc-mcp/`.
 3. Confirm that the folder directly contains `main.js`, `manifest.json`, and `styles.css`.
 4. Enable **TaskDoc MCP** under Obsidian → Settings → Community plugins.
@@ -74,6 +76,14 @@ Use **Copy client config** on the settings page. The generated configuration con
 }
 ```
 
+Network settings separate the listener from the generated client URL:
+
+- **Bind host** controls which Windows interface accepts connections. Keep `127.0.0.1` for local-only access, use a specific Host-only/bridged adapter address, or use `0.0.0.0` / `::` for all IPv4 / IPv6 interfaces.
+- **Client host** is the concrete IP address or hostname that the MCP client can reach. It cannot be a wildcard address; IPv6 URLs are bracketed automatically.
+- IP literal Host headers are accepted without a source-IP allowlist. DNS Host headers must be `localhost` or match the configured client host, preserving DNS-rebinding protection.
+
+Bearer authentication does not encrypt HTTP traffic. When listening beyond loopback, restrict the port with Windows Firewall to trusted VM addresses/subnets and use TLS or a VPN before crossing an untrusted network. Never expose the plain HTTP endpoint directly to the public internet.
+
 The token is stored in Obsidian SecretStorage. Regenerating it invalidates all copied client configurations.
 
 ## MCP tools
@@ -110,6 +120,7 @@ The production bundle is written to `main.js`.
 - Automatic conversion of manually typed, unlinked cards is reserved but not enabled in this alpha; create tasks through MCP.
 - A crash between rich-block asset and manifest writes can leave a detectable mismatch; there is no automatic mutation-journal repair yet.
 - Obsidian must remain running for MCP access.
+- Non-loopback MCP access uses plain HTTP; token authentication is not transport encryption.
 - The request-id result cache is not yet persisted across an Obsidian/plugin restart.
 
 See [`TASKFLOW_VNEXT_DESIGN.md`](./TASKFLOW_VNEXT_DESIGN.md) for the complete design and acceptance criteria.
