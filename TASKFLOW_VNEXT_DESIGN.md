@@ -1,3 +1,5 @@
+> 历史设计资料；不代表 0.2.0 的功能契约。当前实现见 [0.2.0 设计](docs/DESIGN-0.2.0.md) 和 [中文说明](README.zh-CN.md)。
+
 # TaskDoc MCP vNext 设计
 
 > 状态：需求重整稿（第二轮修订）；日期：2026-08-02。现状盘点见 [`TASKFLOW_CURRENT_DESIGN.md`](./TASKFLOW_CURRENT_DESIGN.md)。本稿设计独立 Obsidian 插件、Kanban 项目入口、关键节点型任务文档、强约束 MCP 工具和 section → PHA comment 同步。

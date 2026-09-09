@@ -1,126 +1,62 @@
-# TaskDoc MCP
+# TaskDoc MCP 0.2.0
 
-[中文使用说明 / Chinese guide](./README.zh-CN.md)
+An Obsidian desktop plugin for task documents, acceptance evidence and resumable AI work. Kanban is the task entry point; Markdown stores the task's structured record. The plugin embeds a Streamable HTTP MCP server and provides human editing commands.
 
-TaskDoc MCP is a desktop-only Obsidian plugin for Kanban-backed task checkpoint documents. It keeps long-term task records concise while preserving large tables, Mermaid diagrams, CP checklists, specifications, and test evidence as addressable rich blocks.
+[中文说明](README.zh-CN.md) · [Release notes](RELEASE_NOTES.md) · [Migration](docs/MIGRATION-0.2.0.md) · [Design](docs/DESIGN-0.2.0.md)
 
-This repository is an early test release extracted from the Taskflow design in [`win-console`](https://github.com/aleygey/win-console).
+## Install
 
-## Alpha scope
+Copy `main.js`, `manifest.json` and `styles.css` from the release ZIP into `<vault>/.obsidian/plugins/taskdoc-mcp/`, then enable the plugin. Requires desktop Obsidian 1.11.4 or later. Preserve existing `data.json`, `runtime.json` and SecretStorage credentials when upgrading.
 
-- Register one or more Obsidian Kanban Markdown boards.
-- Treat a board as a project, a column as a task type, and a linked card as a task.
-- Create a linked task document and card through MCP.
-- Commit validated checkpoint cores with fixed rendering.
-- Store Markdown tables, Mermaid, domain checklists, configuration, specifications, and evidence as rich blocks up to 24,576 characters by default.
-- Write a mutable handoff capsule and resume a task without loading its full history or rich block bodies.
-- Move a card between type columns and synchronize its checkbox completion state.
-- Run a token-authenticated Streamable HTTP MCP endpoint on loopback, a specific VM/LAN adapter, or all IPv4/IPv6 interfaces.
-- Configure boards, MCP, document budgets, and diagnostics from the Obsidian plugin settings page.
+Register an existing Markdown Kanban board in settings, provide vault-relative paths, then scan its H2 headings. Use the command palette to create a task, edit its scope or checkpoints, accept/cancel it, reconcile its card, or inspect diagnostics. The UI and tool descriptions are in Chinese.
 
-PHA synchronization is intentionally unavailable in this alpha. The adapter/outbox boundary and settings placeholder are included, but a real implementation requires the concrete PHA task/comment API, especially comment update semantics.
+For AI access, enable MCP and copy the generated client configuration. The default endpoint is `http://127.0.0.1:27124/mcp`, authenticated by a Bearer token. Configurable remote binding uses HTTP: restrict access to trusted networks and use TLS/VPN across untrusted networks. [Network setup](docs/NETWORK.zh-CN.md).
 
-## Requirements
+## What's different in 0.2.0
 
-- Obsidian Desktop 1.11.4 or newer.
-- An Obsidian Kanban board represented as Markdown headings and checkbox cards.
-- An MCP client that supports remote/Streamable HTTP servers.
+- **Checkpoints are optional.** A simple task can be created and completed without artificial subtasks.
+- **Acceptance is explicit.** Every task criterion has a stable ID and is pending, verified with evidence references, or waived with a reason. Completion requires full coverage and no unfinished checkpoints. Evidence types follow the task profile.
+- **Type, progress and archive are distinct.** Task states are planned, active, blocked, done and cancelled. Archive moves a terminal card to the Kanban Archive section. Boards can organize columns by type or by execution state, with separate task types in state mode.
+- **Resumption preserves knowledge.** Effective decisions and constraints from completed checkpoints remain available with provenance and pagination. Relevant edits mark the existing handoff stale while preserving pending checks.
+- **Humans can correct the record.** Task and checkpoint editors share the service validation. Changed scope/evidence invalidates affected verification. Card reconciliation requires a fresh preview; document recovery backs up manual text before rebuilding.
+- **Writes survive retries and interruption.** A private persistent request ledger prevents duplicate execution across reloads. A write journal supports conditional rollback and stops if later human edits would be overwritten.
 
-Do not enable the old `win-console` Taskflow writer and TaskDoc MCP against the same files at the same time.
+The system validates references and declared evidence, not the real-world truth of test results. Waivers must record a reason. Reopening resets task acceptance to pending.
 
-## Install from a release
+## MCP surface
 
-1. Download `taskdoc-mcp-0.1.0-alpha.2.zip` from the GitHub Release.
-2. Extract it to `<vault>/.obsidian/plugins/taskdoc-mcp/`.
-3. Confirm that the folder directly contains `main.js`, `manifest.json`, and `styles.css`.
-4. Enable **TaskDoc MCP** under Obsidian → Settings → Community plugins.
-5. Open Obsidian → Settings → TaskDoc MCP.
-
-The plugin is desktop-only because the MCP server uses the Node.js HTTP API.
-
-## Configure a board
-
-1. In **Boards**, choose **Add**.
-2. Enter a vault-relative board file such as `Projects/win-console.md`.
-3. Enter the task document folder, for example `Tasks/win-console`.
-4. Choose **Scan headings**.
-5. Give each discovered column a stable type ID and validation profile.
-
-Task semantics are fixed:
-
-| Obsidian object | TaskDoc meaning |
+| Read | Write |
 | --- | --- |
-| Board | Project |
-| H2 column | Task type |
-| Linked checkbox card | Task |
-| Checked card | Completed task |
-| Task document H2 section | Checkpoint/subtask |
+| `task_catalog` — boards, types and state mappings | `task_create` — task and linked card |
+| `task_query` — document state, card state, diagnostics | `task_update` — scope, evidence, type, state, archive |
+| `task_resume` — handoff, acceptance, effective context | `task_card_update` — compatibility move/reopen entry |
+| `task_read` — outline, checkpoint, paged block | `task_checkpoint_commit` — replace checkpoint core |
+| `task_reconcile` preview | `task_block_put`, `task_handoff`, `task_finalize`, `task_reconcile` apply |
 
-## Connect an MCP client
+Use `schema_version: 2` for new writes. Version 1 request shapes remain accepted, but completion now requires explicit criterion coverage. Reuse the exact `request_id` and payload for retries. Use the latest document or object revision as required by the tool schema; new checkpoints/blocks use revision zero.
 
-Use **Copy client config** on the settings page. The generated configuration contains the current endpoint and Bearer token. A representative OpenCode configuration is:
+Task evidence references use the evidence ID. Checkpoint evidence references use `checkpoint_id/evidence_id`. `task_finalize` accepts criterion assessments, a final outcome and evidence; `status: "cancelled"` records cancellation separately from `archived: true`.
 
-```json
-{
-  "mcp": {
-    "taskdoc": {
-      "type": "remote",
-      "url": "http://127.0.0.1:27124/mcp",
-      "enabled": true,
-      "oauth": false,
-      "headers": {
-        "Authorization": "Bearer <generated-token>"
-      }
-    }
-  }
-}
-```
+Always read all `task_resume` context pages until `context_complete` is true. If active details were omitted for size, read each returned checkpoint ID before continuing. Tool output is capped at 64 KiB; large successful mutations return a compact receipt with `committed` and `result_omitted`, so clients must reread instead of repeating a creation.
 
-Network settings separate the listener from the generated client URL:
+Query failures are isolated per linked card. Up to 50 diagnostic entries are returned, with total/truncation metadata. Explicit reconciliation compares document and board revisions. Terminal state cannot be inferred solely from a manually checked card.
 
-- **Bind host** controls which Windows interface accepts connections. Keep `127.0.0.1` for local-only access, use a specific Host-only/bridged adapter address, or use `0.0.0.0` / `::` for all IPv4 / IPv6 interfaces.
-- **Client host** is the concrete IP address or hostname that the MCP client can reach. It cannot be a wildcard address; IPv6 URLs are bracketed automatically.
-- IP literal Host headers are accepted without a source-IP allowlist. DNS Host headers must be `localhost` or match the configured client host, preserving DNS-rebinding protection.
+## Storage and compatibility
 
-Bearer authentication does not encrypt HTTP traffic. When listening beyond loopback, restrict the port with Windows Firewall to trusted VM addresses/subnets and use TLS or a VPN before crossing an untrusted network. Never expose the plain HTTP endpoint directly to the public internet.
+New documents use `checkpoint/v2`, stable UUID filenames and readable card aliases. Existing TaskDoc v1 documents are read without rewriting and upgraded on mutation. Previously completed v1 records retain their historical state but are flagged for acceptance review; migration never invents verification. See [migration details](docs/MIGRATION-0.2.0.md).
 
-The token is stored in Obsidian SecretStorage. Regenerating it invalidates all copied client configurations.
+The persistent request ledger retains the most recent 1,000 full results and older request fingerprints. An old retry returns `IDEMPOTENCY_EXPIRED` rather than executing again. Interrupted transactions block writes until recovered in diagnostics. The journal and ledger live in plugin-private `runtime.json`; don't delete this file to bypass a recovery conflict.
 
-## MCP tools
+Supports H2 columns, top-level checkbox cards, full vault-relative wikilinks, the Kanban settings footer and the standard Archive section. Code/comment examples are ignored. Short ambiguous links, automatic conversion of arbitrary notes and legacy win-console migration are outside this release. PHA integration remains an interface placeholder.
 
-| Tool | Purpose |
-| --- | --- |
-| `task_catalog` | List configured boards and mapped type columns. |
-| `task_query` | Query linked tasks by project, type, or state. |
-| `task_resume` | Return a bounded resume packet without rich block bodies. |
-| `task_read` | Read an outline, checkpoint, or paged rich block. |
-| `task_create` | Create a task document and linked Kanban card. |
-| `task_card_update` | Move a task to another type column or reopen it as active. |
-| `task_checkpoint_commit` | Create or replace a structured checkpoint core. |
-| `task_block_put` | Create or replace a typed rich content block. |
-| `task_handoff` | Replace the mutable cross-session resume capsule. |
-| `task_finalize` | Validate evidence, then complete or archive the task card. |
-
-Writes use stable IDs, expected revisions, and request idempotency keys. Free-form append logs, session todo lists, and arbitrary frontmatter mutation are not exposed. The alpha idempotency-result cache lasts for the current plugin runtime; after reloading Obsidian, reread the task before retrying an uncertain write.
+The journal coordinates one plugin instance, not multiple writers on shared storage. Avoid concurrent writers across computers. User-editable managed text is protected by hashes; recovery preserves the current file in `TaskDoc Backups/*.txt` and does not automatically import arbitrary prose.
 
 ## Development
 
-```powershell
-npm.cmd install
-npm.cmd run check
+```sh
+npm ci
+npm run check
+npm run package:release
 ```
 
-The production bundle is written to `main.js`.
-
-## Known alpha limitations
-
-- PHA remote synchronization is not active without its API specification.
-- Direct manual edits inside plugin-managed checkpoint regions are detected as conflicts; import/reconciliation UI is intentionally conservative.
-- The plugin understands the standard Markdown shape of Kanban boards. It does not depend on private runtime APIs from a Kanban fork.
-- Automatic conversion of manually typed, unlinked cards is reserved but not enabled in this alpha; create tasks through MCP.
-- A crash between rich-block asset and manifest writes can leave a detectable mismatch; there is no automatic mutation-journal repair yet.
-- Obsidian must remain running for MCP access.
-- Non-loopback MCP access uses plain HTTP; token authentication is not transport encryption.
-- The request-id result cache is not yet persisted across an Obsidian/plugin restart.
-
-See [`TASKFLOW_VNEXT_DESIGN.md`](./TASKFLOW_VNEXT_DESIGN.md) for the complete design and acceptance criteria.
+Use Node.js 22 or 24. Packaging writes `release/taskdoc-mcp-0.2.0.zip`. Tests cover domain workflows, actual MCP HTTP clients, request persistence, recovery and modal callbacks with an Obsidian UI substitute. Real Obsidian/Kanban visual behavior and cross-platform filesystem semantics still require testing in a separate vault.

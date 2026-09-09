@@ -14,8 +14,18 @@ const board: BoardConfig = {
   defaultColumnId: "analysis",
   autoConvertCards: false,
   columns: [
-    { id: "analysis", heading: "Analysis", typeId: "analysis", profile: "research" },
-    { id: "implementation", heading: "Implementation", typeId: "implementation", profile: "feature" },
+    {
+      id: "analysis",
+      heading: "Analysis",
+      typeId: "analysis",
+      profile: "research",
+    },
+    {
+      id: "implementation",
+      heading: "Implementation",
+      typeId: "implementation",
+      profile: "feature",
+    },
   ],
 };
 
@@ -39,7 +49,10 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
     "30000000-0000-4000-8000-000000000003",
     "40000000-0000-4000-8000-000000000004",
   ]);
-  const service = new TaskService(vault, [board], { idFactory: ids, now: () => "2026-08-02T12:00:00.000Z" });
+  const service = new TaskService(vault, [board], {
+    idFactory: ids,
+    now: () => "2026-08-02T12:00:00.000Z",
+  });
 
   const catalog = await service.catalog({});
   assert.equal(catalog.boards[0]?.columns.length, 2);
@@ -58,7 +71,12 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
   assert.equal(created.pha_sync, "unbound");
   assert.match(created.task.taskId, /^[0-9a-f-]{36}$/);
   assert.equal(await vault.exists(created.task.path), true);
-  assert.match(await vault.read(board.file), new RegExp(`\\[\\[${escapeRegExp(created.task.path.replace(/\.md$/, ""))}\\|验证跨会话任务服务\\]\\]`));
+  assert.match(
+    await vault.read(board.file),
+    new RegExp(
+      `\\[\\[${escapeRegExp(created.task.path.replace(/\.md$/, ""))}\\|验证跨会话任务服务\\]\\]`,
+    ),
+  );
 
   const queried = await service.query({
     board_id: board.id,
@@ -67,7 +85,10 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
     query: "跨会话",
     limit: 20,
   });
-  assert.deepEqual(queried.tasks.map((task) => task.task_id), [created.task.taskId]);
+  assert.deepEqual(
+    queried.tasks.map((task) => task.task_id),
+    [created.task.taskId],
+  );
 
   const moved = await service.cardUpdate({
     schema_version: 1,
@@ -91,7 +112,13 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
       status: "active" as const,
       objective: {
         statement: "实现任务的持久 checkpoint 与接续卡",
-        acceptance: [{ id: "AC-1", statement: "新实例可读取接续信息", status: "pending" as const }],
+        acceptance: [
+          {
+            id: "AC-1",
+            statement: "新实例可读取接续信息",
+            status: "pending" as const,
+          },
+        ],
       },
       judgment: {
         decisions: ["任务身份和 checkpoint 身份使用稳定 UUID"],
@@ -103,13 +130,19 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
   assert.equal(checkpoint.document_revision, 3);
 
   const repeated = await service.checkpointCommit(checkpointInput);
-  assert.deepEqual(repeated, checkpoint, "same request_id and payload must return the first result");
+  assert.deepEqual(
+    repeated,
+    checkpoint,
+    "same request_id and payload must return the first result",
+  );
   await assert.rejects(
-    () => service.checkpointCommit({
-      ...checkpointInput,
-      core: { ...checkpointInput.core, title: "复用请求键但改变内容" },
-    }),
-    (error: unknown) => error instanceof TaskApiError && error.code === "IDEMPOTENCY_CONFLICT",
+    () =>
+      service.checkpointCommit({
+        ...checkpointInput,
+        core: { ...checkpointInput.core, title: "复用请求键但改变内容" },
+      }),
+    (error: unknown) =>
+      error instanceof TaskApiError && error.code === "IDEMPOTENCY_CONFLICT",
   );
 
   const block = await service.blockPut({
@@ -123,7 +156,8 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
       title: "接续数据流",
       summary: "展示 checkpoint、handoff 与新会话之间的持久化关系",
       supports: "judgment",
-      content: "flowchart LR\n  CP[Checkpoint] --> H[Handoff]\n  H --> S[New session]",
+      content:
+        "flowchart LR\n  CP[Checkpoint] --> H[Handoff]\n  H --> S[New session]",
     },
   });
   assert.equal(block.block.revision, 1);
@@ -133,33 +167,37 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
   assert.match(originalBlockAsset, /```mermaid/);
   await vault.write(block.block.path, `${originalBlockAsset}\nmanual edit\n`);
   await assert.rejects(
-    () => service.read({
-      task_id: created.task.taskId,
-      view: "block",
-      checkpoint_id: checkpoint.checkpoint.id,
-      block_id: block.block.id,
-      checkpoint_limit: 20,
-      max_chars: 4096,
-    }),
-    (error: unknown) => error instanceof TaskApiError && error.code === "DOCUMENT_CONFLICT",
+    () =>
+      service.read({
+        task_id: created.task.taskId,
+        view: "block",
+        checkpoint_id: checkpoint.checkpoint.id,
+        block_id: block.block.id,
+        checkpoint_limit: 20,
+        max_chars: 4096,
+      }),
+    (error: unknown) =>
+      error instanceof TaskApiError && error.code === "DOCUMENT_CONFLICT",
   );
   await assert.rejects(
-    () => service.blockPut({
-      schema_version: 1,
-      request_id: "request-block-conflict",
-      task_id: created.task.taskId,
-      checkpoint_id: checkpoint.checkpoint.id,
-      block_id: block.block.id,
-      expected_revision: 1,
-      block: {
-        kind: "mermaid",
-        title: "接续数据流",
-        summary: "展示 checkpoint、handoff 与新会话之间的持久化关系",
-        supports: "judgment",
-        content: "flowchart LR\n  CP[Checkpoint] --> S[Session]",
-      },
-    }),
-    (error: unknown) => error instanceof TaskApiError && error.code === "DOCUMENT_CONFLICT",
+    () =>
+      service.blockPut({
+        schema_version: 1,
+        request_id: "request-block-conflict",
+        task_id: created.task.taskId,
+        checkpoint_id: checkpoint.checkpoint.id,
+        block_id: block.block.id,
+        expected_revision: 1,
+        block: {
+          kind: "mermaid",
+          title: "接续数据流",
+          summary: "展示 checkpoint、handoff 与新会话之间的持久化关系",
+          supports: "judgment",
+          content: "flowchart LR\n  CP[Checkpoint] --> S[Session]",
+        },
+      }),
+    (error: unknown) =>
+      error instanceof TaskApiError && error.code === "DOCUMENT_CONFLICT",
   );
   await vault.write(block.block.path, originalBlockAsset);
 
@@ -175,7 +213,9 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
       next_action: "验证新服务实例读取接续卡",
       blockers: [],
       open_questions: [],
-      working_artifacts: [{ path: created.task.path, purpose: "任务事实源", state: "verified" }],
+      working_artifacts: [
+        { path: created.task.path, purpose: "任务事实源", state: "verified" },
+      ],
     },
   });
   assert.equal(handedOff.document_revision, 5);
@@ -191,7 +231,9 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
     completed_limit: 20,
   });
   assert.equal(resumed.capsule?.nextAction, "验证新服务实例读取接续卡");
-  assert.deepEqual(resumed.task.acceptance, ["新服务实例能从任务目录恢复接续点"]);
+  assert.deepEqual(resumed.task.acceptance, [
+    "新服务实例能从任务目录恢复接续点",
+  ]);
   assert.equal(resumed.active_checkpoints[0]?.blocks[0]?.id, block.block.id);
 
   const outline = await nextSession.read({
@@ -232,17 +274,22 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
       status: "done",
       objective: {
         statement: "实现任务的持久 checkpoint 与接续卡",
-        acceptance: [{
-          id: "AC-1",
-          statement: "新实例可读取接续信息",
-          status: "verified",
-          evidence_refs: ["E-1"],
-        }],
+        acceptance: [
+          {
+            id: "AC-1",
+            statement: "新实例可读取接续信息",
+            status: "verified",
+            evidence_refs: ["E-1"],
+          },
+        ],
       },
       judgment: { decisions: ["任务身份和 checkpoint 身份使用稳定 UUID"] },
       outcome: {
-        summary: "新服务实例已从任务目录恢复 checkpoint、block manifest 和接续卡",
-        evidence: [{ id: "E-1", type: "test", statement: "跨实例端到端读取断言通过" }],
+        summary:
+          "新服务实例已从任务目录恢复 checkpoint、block manifest 和接续卡",
+        evidence: [
+          { id: "E-1", type: "test", statement: "跨实例端到端读取断言通过" },
+        ],
       },
     },
   });
@@ -263,6 +310,7 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
     expected_revision: completedCheckpoint.document_revision,
     status: "done",
     final_outcome: "结构化任务可跨服务实例恢复并完成",
+    acceptance: [{ id: "AC-1", status: "verified", evidence_refs: ["E-1"] }],
     evidence: [{ type: "test", statement: "完整服务流程测试通过" }],
     remaining: [],
   });
@@ -276,8 +324,15 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
   const finalBoard = await vault.read(board.file);
   assert.match(finalBoard, /## Implementation[\s\S]*- \[x\]/);
 
-  const done = await nextSession.query({ board_id: board.id, state: "done", limit: 20 });
-  assert.deepEqual(done.tasks.map((task) => task.task_id), [created.task.taskId]);
+  const done = await nextSession.query({
+    board_id: board.id,
+    state: "done",
+    limit: 20,
+  });
+  assert.deepEqual(
+    done.tasks.map((task) => task.task_id),
+    [created.task.taskId],
+  );
 
   const reopened = await nextSession.cardUpdate({
     schema_version: 1,
@@ -297,7 +352,7 @@ test("TaskService runs create → checkpoint → block → handoff → resume �
   assert.match(await vault.read(board.file), /## Implementation[\s\S]*- \[ \]/);
 });
 
-test("finalize requires a checkpoint and column profiles enforce evidence", async () => {
+test("finalize requires covered acceptance and column profiles enforce evidence", async () => {
   const vault = new MemoryVault({ [board.file]: boardMarkdown });
   const service = new TaskService(vault, [board], {
     idFactory: idSequence([
@@ -317,41 +372,54 @@ test("finalize requires a checkpoint and column profiles enforce evidence", asyn
     acceptance: ["至少一个 checkpoint 提供最终证据"],
   });
   await assert.rejects(
-    () => service.finalize({
-      schema_version: 1,
-      request_id: "request-lifecycle-finalize",
-      task_id: created.task.taskId,
-      expected_revision: 1,
-      status: "done",
-      final_outcome: "不应直接完成",
-      evidence: [{ type: "test", statement: "仅有任务级测试描述" }],
-      remaining: [],
-    }),
-    (error: unknown) => error instanceof TaskApiError && error.code === "QUALITY_REJECTED",
+    () =>
+      service.finalize({
+        schema_version: 1,
+        request_id: "request-lifecycle-finalize",
+        task_id: created.task.taskId,
+        expected_revision: 1,
+        status: "done",
+        final_outcome: "不应直接完成",
+        evidence: [{ type: "test", statement: "仅有任务级测试描述" }],
+        remaining: [],
+      }),
+    (error: unknown) =>
+      error instanceof TaskApiError && error.code === "QUALITY_REJECTED",
   );
   await assert.rejects(
-    () => service.checkpointCommit({
-      schema_version: 1,
-      request_id: "request-profile-checkpoint",
-      task_id: created.task.taskId,
-      expected_revision: 0,
-      trigger: "result_verified",
-      core: {
-        title: "形成调研结论",
-        kind: "implementation",
-        status: "done",
-        objective: {
-          statement: "形成带来源的调研结论",
-          acceptance: [{ id: "AC-1", statement: "结论具有来源证据", status: "verified", evidence_refs: ["E-1"] }],
+    () =>
+      service.checkpointCommit({
+        schema_version: 1,
+        request_id: "request-profile-checkpoint",
+        task_id: created.task.taskId,
+        expected_revision: 0,
+        trigger: "result_verified",
+        core: {
+          title: "形成调研结论",
+          kind: "implementation",
+          status: "done",
+          objective: {
+            statement: "形成带来源的调研结论",
+            acceptance: [
+              {
+                id: "AC-1",
+                statement: "结论具有来源证据",
+                status: "verified",
+                evidence_refs: ["E-1"],
+              },
+            ],
+          },
+          judgment: { decisions: ["选择可验证的方案"] },
+          outcome: {
+            summary: "只有测试证据，不满足 research profile",
+            evidence: [
+              { id: "E-1", type: "test", statement: "本地单元测试通过" },
+            ],
+          },
         },
-        judgment: { decisions: ["选择可验证的方案"] },
-        outcome: {
-          summary: "只有测试证据，不满足 research profile",
-          evidence: [{ id: "E-1", type: "test", statement: "本地单元测试通过" }],
-        },
-      },
-    }),
-    (error: unknown) => error instanceof TaskApiError && error.code === "QUALITY_REJECTED",
+      }),
+    (error: unknown) =>
+      error instanceof TaskApiError && error.code === "QUALITY_REJECTED",
   );
 });
 
@@ -366,15 +434,16 @@ test("create rolls its document back when the card cannot be inserted", async ()
   });
 
   await assert.rejects(
-    () => service.create({
-      schema_version: 1,
-      request_id: "request-create-failure",
-      board_id: badBoard.id,
-      column_id: "analysis",
-      title: "应当回滚的任务",
-      objective: "确认跨文件创建失败不会留下孤立任务文档",
-      acceptance: ["任务文档被删除"],
-    }),
+    () =>
+      service.create({
+        schema_version: 1,
+        request_id: "request-create-failure",
+        board_id: badBoard.id,
+        column_id: "analysis",
+        title: "应当回滚的任务",
+        objective: "确认跨文件创建失败不会留下孤立任务文档",
+        acceptance: ["任务文档被删除"],
+      }),
     TaskApiError,
   );
   const taskFiles = await vault.listMarkdownFiles([badBoard.tasksFolder]);
@@ -387,11 +456,17 @@ test("typed Vault busy failures remain safely retryable", async () => {
       throw new VaultIoError("read", path, { code: "EBUSY" });
     }
   }
-  const service = new TaskService(new BusyVault({ [board.file]: boardMarkdown }), [board]);
+  const service = new TaskService(
+    new BusyVault({ [board.file]: boardMarkdown }),
+    [board],
+  );
   await assert.rejects(
     () => service.catalog({}),
-    (error: unknown) => error instanceof TaskApiError &&
-      error.code === "IO_BUSY" && error.retryable && error.action === "retry_same_request",
+    (error: unknown) =>
+      error instanceof TaskApiError &&
+      error.code === "IO_BUSY" &&
+      error.retryable &&
+      error.action === "retry_same_request",
   );
 });
 

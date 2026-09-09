@@ -12,12 +12,27 @@ import {
   normalizeMcpBindHost,
   normalizeMcpClientHost,
 } from "../src/mcp/gateway.js";
-import { taskBlockPutInputSchema, taskCardUpdateInputSchema } from "../src/mcp/schemas.js";
+import {
+  taskBlockPutInputSchema,
+  taskCardUpdateInputSchema,
+} from "../src/mcp/schemas.js";
 
 const TOKEN = "test-token-with-at-least-thirty-two-characters";
 
-function createApi(): TaskApi & { catalogError?: TaskApiError; catalogOutput?: TaskCatalogOutput } {
-  const api: TaskApi & { catalogError?: TaskApiError; catalogOutput?: TaskCatalogOutput } = {
+function createApi(): TaskApi & {
+  catalogError?: TaskApiError;
+  catalogOutput?: TaskCatalogOutput;
+} {
+  const api: TaskApi & {
+    catalogError?: TaskApiError;
+    catalogOutput?: TaskCatalogOutput;
+  } = {
+    async update() {
+      throw new Error("not used in this test");
+    },
+    async reconcile() {
+      throw new Error("not used in this test");
+    },
     async catalog() {
       if (api.catalogError !== undefined) throw api.catalogError;
       return api.catalogOutput ?? { boards: [] };
@@ -67,7 +82,11 @@ function createApi(): TaskApi & { catalogError?: TaskApiError; catalogOutput?: T
 }
 
 async function withGateway<T>(
-  run: (context: { gateway: McpHttpGateway; endpoint: string; api: ReturnType<typeof createApi> }) => Promise<T>,
+  run: (context: {
+    gateway: McpHttpGateway;
+    endpoint: string;
+    api: ReturnType<typeof createApi>;
+  }) => Promise<T>,
   options: { maxConcurrentRequests?: number } = {},
 ): Promise<T> {
   const api = createApi();
@@ -75,7 +94,9 @@ async function withGateway<T>(
     api,
     token: TOKEN,
     port: 0,
-    ...(options.maxConcurrentRequests === undefined ? {} : { maxConcurrentRequests: options.maxConcurrentRequests }),
+    ...(options.maxConcurrentRequests === undefined
+      ? {}
+      : { maxConcurrentRequests: options.maxConcurrentRequests }),
   });
   const started = await gateway.start();
   assert.equal(started.running, true);
@@ -90,7 +111,7 @@ async function withGateway<T>(
   }
 }
 
-test("registers the ten TaskDoc tools and returns structured data/errors", async () => {
+test("registers the twelve TaskDoc tools and returns structured data/errors", async () => {
   await withGateway(async ({ endpoint, api }) => {
     const client = new Client({ name: "taskdoc-mcp-test", version: "1.0.0" });
     const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
@@ -100,46 +121,87 @@ test("registers the ten TaskDoc tools and returns structured data/errors", async
     await client.connect(transport as unknown as Transport);
     try {
       const listed = await client.listTools();
-      assert.deepEqual(
-        listed.tools.map((tool) => tool.name).sort(),
-        [
-          "task_block_put",
-          "task_card_update",
-          "task_catalog",
-          "task_checkpoint_commit",
-          "task_create",
-          "task_finalize",
-          "task_handoff",
-          "task_query",
-          "task_read",
-          "task_resume",
-        ],
+      assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), [
+        "task_block_put",
+        "task_card_update",
+        "task_catalog",
+        "task_checkpoint_commit",
+        "task_create",
+        "task_finalize",
+        "task_handoff",
+        "task_query",
+        "task_read",
+        "task_reconcile",
+        "task_resume",
+        "task_update",
+      ]);
+      const createTool = listed.tools.find(
+        (tool) => tool.name === "task_create",
       );
-      const createTool = listed.tools.find((tool) => tool.name === "task_create");
-      const checkpointTool = listed.tools.find((tool) => tool.name === "task_checkpoint_commit");
-      const finalizeTool = listed.tools.find((tool) => tool.name === "task_finalize");
+      const checkpointTool = listed.tools.find(
+        (tool) => tool.name === "task_checkpoint_commit",
+      );
+      const finalizeTool = listed.tools.find(
+        (tool) => tool.name === "task_finalize",
+      );
       assert.equal(createTool?.annotations?.destructiveHint, false);
       assert.equal(createTool?.annotations?.idempotentHint, false);
       assert.equal(finalizeTool?.annotations?.destructiveHint, true);
       assert.equal(finalizeTool?.annotations?.idempotentHint, false);
       assert.match(createTool?.title ?? "", /创建任务/);
-      const createProperties = (createTool?.inputSchema as { properties?: Record<string, { description?: string }> }).properties;
-      const checkpointProperties = (checkpointTool?.inputSchema as { properties?: Record<string, { description?: string }> }).properties;
-      assert.match(createProperties?.board_id?.description ?? "", /task_catalog/);
+      const createProperties = (
+        createTool?.inputSchema as {
+          properties?: Record<string, { description?: string }>;
+        }
+      ).properties;
+      const checkpointProperties = (
+        checkpointTool?.inputSchema as {
+          properties?: Record<string, { description?: string }>;
+        }
+      ).properties;
+      assert.match(
+        createProperties?.board_id?.description ?? "",
+        /task_catalog/,
+      );
       assert.match(createProperties?.title?.description ?? "", /任务标题/);
       assert.match(checkpointProperties?.core?.description ?? "", /全量替换/);
 
-      const success = await client.callTool({ name: "task_catalog", arguments: {} });
-      assert.equal(success.isError, undefined, JSON.stringify(success));
-      assert.deepEqual(success.structuredContent, { ok: true, data: { boards: [] } });
-      const successContent = success.content as Array<{ type: string; text?: string }>;
-      assert.deepEqual(JSON.parse(successContent[0]?.text ?? ""), success.structuredContent);
-
-      api.catalogError = new TaskApiError("QUALITY_REJECTED", "Core contains a session transcript", {
-        action: "revise_input",
-        issues: [{ path: "/core", rule: "NO_TRANSCRIPT", message: "Remove dialogue" }],
+      const success = await client.callTool({
+        name: "task_catalog",
+        arguments: {},
       });
-      const failure = await client.callTool({ name: "task_catalog", arguments: {} });
+      assert.equal(success.isError, undefined, JSON.stringify(success));
+      assert.deepEqual(success.structuredContent, {
+        ok: true,
+        data: { boards: [] },
+      });
+      const successContent = success.content as Array<{
+        type: string;
+        text?: string;
+      }>;
+      assert.deepEqual(
+        JSON.parse(successContent[0]?.text ?? ""),
+        success.structuredContent,
+      );
+
+      api.catalogError = new TaskApiError(
+        "QUALITY_REJECTED",
+        "Core contains a session transcript",
+        {
+          action: "revise_input",
+          issues: [
+            {
+              path: "/core",
+              rule: "NO_TRANSCRIPT",
+              message: "Remove dialogue",
+            },
+          ],
+        },
+      );
+      const failure = await client.callTool({
+        name: "task_catalog",
+        arguments: {},
+      });
       assert.equal(failure.isError, true);
       assert.deepEqual(failure.structuredContent, {
         ok: false,
@@ -148,27 +210,48 @@ test("registers the ten TaskDoc tools and returns structured data/errors", async
           message: "Core contains a session transcript",
           action: "revise_input",
           retryable: false,
-          issues: [{ path: "/core", rule: "NO_TRANSCRIPT", message: "Remove dialogue" }],
+          issues: [
+            {
+              path: "/core",
+              rule: "NO_TRANSCRIPT",
+              message: "Remove dialogue",
+            },
+          ],
         },
       });
-      const failureContent = failure.content as Array<{ type: string; text?: string }>;
-      assert.deepEqual(JSON.parse(failureContent[0]?.text ?? ""), failure.structuredContent);
+      const failureContent = failure.content as Array<{
+        type: string;
+        text?: string;
+      }>;
+      assert.deepEqual(
+        JSON.parse(failureContent[0]?.text ?? ""),
+        failure.structuredContent,
+      );
 
       delete api.catalogError;
       api.catalogOutput = {
-        boards: [{
-          id: "large-board",
-          name: "x".repeat(70_000),
-          projectId: "large",
-          file: "Projects/large.md",
-          tasksFolder: "Tasks/large",
-          autoConvertCards: false,
-          columns: [],
-        }],
+        boards: [
+          {
+            id: "large-board",
+            name: "x".repeat(70_000),
+            projectId: "large",
+            file: "Projects/large.md",
+            tasksFolder: "Tasks/large",
+            autoConvertCards: false,
+            columns: [],
+          },
+        ],
       };
-      const oversized = await client.callTool({ name: "task_catalog", arguments: {} });
+      const oversized = await client.callTool({
+        name: "task_catalog",
+        arguments: {},
+      });
       assert.equal(oversized.isError, true);
-      assert.equal((oversized.structuredContent as { error?: { code?: string } })?.error?.code, "INVALID_INPUT");
+      assert.equal(
+        (oversized.structuredContent as { error?: { code?: string } })?.error
+          ?.code,
+        "INVALID_INPUT",
+      );
     } finally {
       await client.close();
     }
@@ -192,11 +275,17 @@ test("accepts the configurable rich-block range and rejects free task types", ()
   };
   assert.equal(taskBlockPutInputSchema.safeParse(baseBlock).success, true);
   assert.equal(
-    taskBlockPutInputSchema.safeParse({ ...baseBlock, block: { ...baseBlock.block, content: `${baseBlock.block.content}x` } }).success,
+    taskBlockPutInputSchema.safeParse({
+      ...baseBlock,
+      block: { ...baseBlock.block, content: `${baseBlock.block.content}x` },
+    }).success,
     true,
   );
   assert.equal(
-    taskBlockPutInputSchema.safeParse({ ...baseBlock, block: { ...baseBlock.block, content: "x".repeat(200_001) } }).success,
+    taskBlockPutInputSchema.safeParse({
+      ...baseBlock,
+      block: { ...baseBlock.block, content: "x".repeat(200_001) },
+    }).success,
     false,
   );
 
@@ -228,14 +317,23 @@ test("normalizes configurable MCP listener and client hosts", () => {
   assert.equal(normalizeMcpClientHost("[fd00::1]"), "fd00::1");
   assert.equal(normalizeMcpClientHost("0:0:0:0:0:0:0:1"), "::1");
   assert.equal(normalizeMcpClientHost("Vm-Host.Local"), "vm-host.local");
-  assert.equal(formatMcpEndpoint("fd00::1", 27124), "http://[fd00::1]:27124/mcp");
+  assert.equal(
+    formatMcpEndpoint("fd00::1", 27124),
+    "http://[fd00::1]:27124/mcp",
+  );
   assert.throws(() => normalizeMcpClientHost("0.0.0.0"), /wildcard/);
   assert.throws(() => normalizeMcpClientHost("0:0:0:0:0:0:0:0"), /wildcard/);
   assert.throws(() => normalizeMcpClientHost("0"), /wildcard/);
   assert.throws(() => normalizeMcpClientHost("0x0"), /wildcard/);
   assert.equal(normalizeMcpClientHost("127.1"), "127.0.0.1");
-  assert.throws(() => normalizeMcpBindHost("http://127.0.0.1"), /IP address or hostname/);
-  assert.throws(() => normalizeMcpClientHost("192.168.56.1:27124"), /IP address or hostname/);
+  assert.throws(
+    () => normalizeMcpBindHost("http://127.0.0.1"),
+    /IP address or hostname/,
+  );
+  assert.throws(
+    () => normalizeMcpClientHost("192.168.56.1:27124"),
+    /IP address or hostname/,
+  );
   assert.throws(() => normalizeMcpClientHost("*"), /invalid hostname/);
   assert.throws(() => normalizeMcpClientHost("-bad-host"), /invalid hostname/);
 });
@@ -273,20 +371,28 @@ test("enforces Bearer, Host, Origin, content type, and the 1 MiB body limit", as
 
     const wrongMediaType = await fetch(endpoint, {
       method: "POST",
-      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "text/plain" },
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "Content-Type": "text/plain",
+      },
       body,
     });
     assert.equal(wrongMediaType.status, 415);
 
     const oversized = await fetch(endpoint, {
       method: "POST",
-      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "Content-Type": "application/json",
+      },
       body: `"${"x".repeat(1024 * 1024)}"`,
     });
     assert.equal(oversized.status, 413);
 
     const target = new URL(endpoint);
-    const unauthenticatedStatusForHost = async (host: string): Promise<number> =>
+    const unauthenticatedStatusForHost = async (
+      host: string,
+    ): Promise<number> =>
       new Promise<number>((resolve, reject) => {
         const request = httpRequest(
           {
@@ -308,8 +414,14 @@ test("enforces Bearer, Host, Origin, content type, and the 1 MiB body limit", as
         request.once("error", reject);
         request.end(body);
       });
-    assert.equal(await unauthenticatedStatusForHost(`192.168.56.1:${target.port}`), 401);
-    assert.equal(await unauthenticatedStatusForHost(`[fd00::1]:${target.port}`), 401);
+    assert.equal(
+      await unauthenticatedStatusForHost(`192.168.56.1:${target.port}`),
+      401,
+    );
+    assert.equal(
+      await unauthenticatedStatusForHost(`[fd00::1]:${target.port}`),
+      401,
+    );
 
     const invalidHostStatus = await new Promise<number>((resolve, reject) => {
       const request = httpRequest(
@@ -349,20 +461,23 @@ test("accepts only the configured DNS client Host name", async () => {
     const port = started.port ?? 0;
     const requestStatus = async (host: string): Promise<number> =>
       new Promise<number>((resolve, reject) => {
-        const request = httpRequest({
-          hostname: "127.0.0.1",
-          port,
-          path: "/mcp",
-          method: "POST",
-          headers: {
-            Host: `${host}:${port}`,
-            "Content-Type": "application/json",
-            "Content-Length": "2",
+        const request = httpRequest(
+          {
+            hostname: "127.0.0.1",
+            port,
+            path: "/mcp",
+            method: "POST",
+            headers: {
+              Host: `${host}:${port}`,
+              "Content-Type": "application/json",
+              "Content-Length": "2",
+            },
           },
-        }, (response) => {
-          response.resume();
-          response.once("end", () => resolve(response.statusCode ?? 0));
-        });
+          (response) => {
+            response.resume();
+            response.once("end", () => resolve(response.statusCode ?? 0));
+          },
+        );
         request.once("error", reject);
         request.end("{}");
       });
@@ -386,7 +501,10 @@ test("listens on all IPv4 interfaces while advertising a reachable VM host", asy
   try {
     assert.equal(started.host, "0.0.0.0");
     assert.equal(started.client_host, "192.168.56.1");
-    assert.equal(started.endpoint, `http://192.168.56.1:${started.port ?? 0}/mcp`);
+    assert.equal(
+      started.endpoint,
+      `http://192.168.56.1:${started.port ?? 0}/mcp`,
+    );
 
     const response = await fetch(`http://127.0.0.1:${started.port ?? 0}/mcp`, {
       method: "POST",
@@ -400,35 +518,157 @@ test("listens on all IPv4 interfaces while advertising a reachable VM host", asy
 });
 
 test("rejects requests over the configured concurrency budget", async () => {
-  await withGateway(async ({ endpoint, gateway }) => {
-    const target = new URL(endpoint);
-    const blocker = httpRequest({
-      hostname: target.hostname,
-      port: target.port,
-      path: target.pathname,
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${TOKEN}`,
-        "Content-Type": "application/json",
-        "Content-Length": "100",
-      },
-    });
-    blocker.on("error", () => undefined);
-    const blockerClosed = new Promise<void>((resolve) => blocker.once("close", () => resolve()));
-    blocker.write("{");
-    for (let attempt = 0; attempt < 40 && gateway.status().active_requests === 0; attempt += 1) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 5));
-    }
-    assert.equal(gateway.status().active_requests, 1);
+  await withGateway(
+    async ({ endpoint, gateway }) => {
+      const target = new URL(endpoint);
+      const blocker = httpRequest({
+        hostname: target.hostname,
+        port: target.port,
+        path: target.pathname,
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+          "Content-Length": "100",
+        },
+      });
+      blocker.on("error", () => undefined);
+      const blockerClosed = new Promise<void>((resolve) =>
+        blocker.once("close", () => resolve()),
+      );
+      blocker.write("{");
+      for (
+        let attempt = 0;
+        attempt < 40 && gateway.status().active_requests === 0;
+        attempt += 1
+      ) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(gateway.status().active_requests, 1);
 
-    const limited = await fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-      body: "{}",
+      const limited = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      });
+      assert.equal(limited.status, 429);
+      assert.equal(limited.headers.get("retry-after"), "1");
+      blocker.destroy();
+      await blockerClosed;
+    },
+    { maxConcurrentRequests: 1 },
+  );
+});
+
+test("real MCP client completes a simple v2 task and survives response loss", async () => {
+  const { TaskService } = await import("../src/service.js");
+  const { MemoryVault } = await import("../src/testing/memoryVault.js");
+  const { MemoryRuntimeStore } = await import("../src/persistence.js");
+  const board = {
+    id: "board",
+    name: "Project",
+    projectId: "project",
+    file: "Board.md",
+    tasksFolder: "Tasks",
+    autoConvertCards: false,
+    columns: [
+      {
+        id: "work",
+        heading: "Work",
+        typeId: "other",
+        profile: "other" as const,
+      },
+    ],
+  };
+  const vault = new MemoryVault({ "Board.md": "## Work\n\n" });
+  const persistence = new MemoryRuntimeStore();
+  const service = new TaskService(vault, [board], { persistence });
+  const gateway = new McpHttpGateway({ api: service, token: TOKEN, port: 0 });
+  const started = await gateway.start();
+  const client = new Client({ name: "v2-lifecycle", version: "0.2.0" });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(started.endpoint!), {
+      requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    }) as unknown as Transport,
+  );
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const result = await client.callTool({ name, arguments: args });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    return (result.structuredContent as { data: Record<string, any> }).data;
+  };
+  try {
+    const creation = {
+      schema_version: 2,
+      request_id: "create-over-http",
+      board_id: "board",
+      column_id: "work",
+      title: "HTTP flow",
+      objective: "Complete the workflow",
+      acceptance: ["Works through MCP"],
+    };
+    const created = await call("task_create", creation);
+    const taskId = created.task.taskId;
+    assert.deepEqual(await call("task_create", creation), created);
+    assert.deepEqual(
+      await new TaskService(vault, [board], { persistence }).create(
+        creation as Parameters<typeof service.create>[0],
+      ),
+      created,
+    );
+    const updated = await call("task_update", {
+      schema_version: 2,
+      request_id: "update-over-http",
+      task_id: taskId,
+      expected_revision: 1,
+      reason: "Clarify scope",
+      title: "HTTP flow verified",
     });
-    assert.equal(limited.status, 429);
-    assert.equal(limited.headers.get("retry-after"), "1");
-    blocker.destroy();
-    await blockerClosed;
-  }, { maxConcurrentRequests: 1 });
+    const done = await call("task_finalize", {
+      schema_version: 2,
+      request_id: "finalize-over-http",
+      task_id: taskId,
+      expected_revision: updated.document_revision,
+      status: "done",
+      final_outcome: "The client lifecycle passed",
+      evidence: [
+        { id: "E-http", type: "test", statement: "Client calls passed" },
+      ],
+      acceptance: [
+        { id: "AC-1", status: "verified", evidence_refs: ["E-http"] },
+      ],
+      remaining: [],
+    });
+    assert.equal(done.task.state, "done");
+    assert.equal(
+      (await call("task_resume", { task_id: taskId })).active_checkpoints
+        .length,
+      0,
+    );
+    assert.equal(
+      (await call("task_reconcile", { task_id: taskId })).changes.length,
+      0,
+    );
+    // A committed write with a large result must never be reported as a failed write.
+    service.update = async () =>
+      ({
+        ...updated,
+        task: { ...created.task, title: "x".repeat(70_000) },
+      }) as Awaited<ReturnType<typeof service.update>>;
+    const receipt = await call("task_update", {
+      schema_version: 2,
+      request_id: "large-response-http",
+      task_id: taskId,
+      expected_revision: done.document_revision,
+      reason: "Response budget test",
+      title: "Small input",
+    });
+    assert.equal(receipt.committed, true);
+    assert.equal(receipt.result_omitted, true);
+  } finally {
+    await client.close();
+    await gateway.stop();
+  }
 });

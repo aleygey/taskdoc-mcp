@@ -1,3 +1,5 @@
+> 历史设计资料；不代表 0.2.0 的功能契约。当前实现见 [0.2.0 设计](docs/DESIGN-0.2.0.md) 和 [中文说明](README.zh-CN.md)。
+
 # Taskflow（任务文档 MCP）现状设计盘点
 
 > 盘点基线：`aleygey/win-console` `main@a4a2e040c28f4d2b16b70a63e6ac11eb8d0d4fe8`，2026-07-14。本文只描述当前设计与已观察到的问题，不包含重构方案。

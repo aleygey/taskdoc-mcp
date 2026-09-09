@@ -2,7 +2,7 @@ import type {
   BoardColumnConfig,
   BoardConfig,
   TaskState,
-  ValidationProfile
+  ValidationProfile,
 } from "../types.js";
 
 export interface BoardFrontmatter {
@@ -54,6 +54,9 @@ export interface ParsedBoard {
   eol: "\n" | "\r\n";
   frontmatter?: BoardFrontmatter;
   columns: BoardColumn[];
+  archive?: BoardColumn;
+  archiveStartOffset?: number;
+  settingsStartOffset?: number;
   hash: string;
   revision: string;
 }
@@ -100,6 +103,7 @@ export interface BoardQueryResult {
   columnId?: string;
   columnHeading: string;
   state: "active" | "done";
+  archived?: boolean;
   title: string;
   taskPath?: string;
   linkTarget?: string;
@@ -125,6 +129,7 @@ export interface UpdateCardInput {
   checked?: boolean;
   title?: string;
   expectedRevision?: string;
+  archived?: boolean;
 }
 
 export interface BoardMutationResult {
@@ -155,7 +160,11 @@ export interface OrphanIssue {
 
 export interface BrokenIssue {
   card: ReconcileCardReference;
-  reason: "unlinked" | "missing-document" | "unreadable-document" | "not-task-document";
+  reason:
+    | "unlinked"
+    | "missing-document"
+    | "unreadable-document"
+    | "not-task-document";
 }
 
 export interface DuplicateIssue {

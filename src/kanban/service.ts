@@ -1,9 +1,12 @@
 import { parse as parseYaml } from "yaml";
-import type { BoardConfig, TaskState, VaultAdapter, VaultFileInfo } from "../types.js";
-import {
-  BoardNotFoundError,
-  BrokenTaskLinkError
-} from "./errors.js";
+import type {
+  BoardConfig,
+  TaskState,
+  VaultAdapter,
+  VaultFileInfo,
+} from "../types.js";
+import { isTerminal } from "../types.js";
+import { BoardNotFoundError, BrokenTaskLinkError } from "./errors.js";
 import { createLinkedCard, updateLinkedCard } from "./mutations.js";
 import { parseBoard } from "./parser.js";
 import { taskDocumentPath, taskPathIdentity } from "./paths.js";
@@ -22,7 +25,7 @@ import type {
   ReconcileReport,
   StatusMismatchIssue,
   TypeMismatchIssue,
-  UpdateCardInput
+  UpdateCardInput,
 } from "./types.js";
 
 interface TaskProjection {
@@ -39,14 +42,14 @@ export class BoardService {
 
   constructor(
     private readonly vault: VaultAdapter,
-    boards: readonly BoardConfig[]
+    boards: readonly BoardConfig[],
   ) {
-    this.boards = [...boards];
+    this.boards = structuredClone([...boards]);
     this.assertUniqueConfiguration(this.boards);
   }
 
   setBoards(boards: readonly BoardConfig[]): void {
-    const next = [...boards];
+    const next = structuredClone([...boards]);
     this.assertUniqueConfiguration(next);
     this.boards = next;
   }
@@ -60,69 +63,93 @@ export class BoardService {
 
   async catalog(boardId?: string): Promise<BoardCatalogEntry[]> {
     const configs = boardId ? [this.requireBoard(boardId)] : this.boards;
-    return Promise.all(configs.map(async (config) => {
-      const { board } = await this.snapshot(config.id);
-      const mappedHeadings = new Set(config.columns.map((column) => column.heading));
-      const unresolvedHeadings = board.columns
-        .filter((column) => !column.id)
-        .map((column) => column.heading);
-      const columns = config.columns.map((configured) => {
-        const parsed = board.columns.find((column) => column.heading === configured.heading);
-        const cards = parsed?.cards ?? [];
-        return {
-          ...configured,
-          resolved: parsed !== undefined,
-          cardCount: cards.length,
-          activeCount: cards.filter((card) => !card.checked).length,
-          doneCount: cards.filter((card) => card.checked).length
-        };
-      });
-      for (const column of board.columns) {
-        if (!mappedHeadings.has(column.heading) && !unresolvedHeadings.includes(column.heading)) {
-          unresolvedHeadings.push(column.heading);
+    return Promise.all(
+      configs.map(async (config) => {
+        const { board } = await this.snapshot(config.id);
+        const mappedHeadings = new Set(
+          config.columns.map((column) => column.heading),
+        );
+        const unresolvedHeadings = board.columns
+          .filter((column) => !column.id)
+          .map((column) => column.heading);
+        const columns = config.columns.map((configured) => {
+          const parsed = board.columns.find(
+            (column) => column.heading === configured.heading,
+          );
+          const cards = parsed?.cards ?? [];
+          return {
+            ...configured,
+            resolved: parsed !== undefined,
+            cardCount: cards.length,
+            activeCount: cards.filter((card) => !card.checked).length,
+            doneCount: cards.filter((card) => card.checked).length,
+          };
+        });
+        for (const column of board.columns) {
+          if (
+            !mappedHeadings.has(column.heading) &&
+            !unresolvedHeadings.includes(column.heading)
+          ) {
+            unresolvedHeadings.push(column.heading);
+          }
         }
-      }
-      const entry: BoardCatalogEntry = {
-        id: config.id,
-        name: config.name,
-        projectId: config.projectId,
-        file: config.file,
-        tasksFolder: config.tasksFolder,
-        autoConvertCards: config.autoConvertCards,
-        revision: board.revision,
-        hash: board.hash,
-        columns,
-        unresolvedHeadings
-      };
-      if (config.defaultColumnId) entry.defaultColumnId = config.defaultColumnId;
-      return entry;
-    }));
+        const entry: BoardCatalogEntry = {
+          id: config.id,
+          name: config.name,
+          projectId: config.projectId,
+          file: config.file,
+          tasksFolder: config.tasksFolder,
+          autoConvertCards: config.autoConvertCards,
+          revision: board.revision,
+          hash: board.hash,
+          columns,
+          unresolvedHeadings,
+        };
+        if (config.defaultColumnId)
+          entry.defaultColumnId = config.defaultColumnId;
+        return entry;
+      }),
+    );
   }
 
   async query(query: BoardQuery = {}): Promise<BoardQueryResult[]> {
-    const configs = query.boardId ? [this.requireBoard(query.boardId)] : this.boards;
+    const configs = query.boardId
+      ? [this.requireBoard(query.boardId)]
+      : this.boards;
     const titleNeedle = query.title?.trim().toLocaleLowerCase();
-    const pathNeedle = query.taskPath ? taskPathIdentity(query.taskPath) : undefined;
+    const pathNeedle = query.taskPath
+      ? taskPathIdentity(query.taskPath)
+      : undefined;
     const results: BoardQueryResult[] = [];
 
     for (const config of configs) {
       const { board } = await this.snapshot(config.id);
-      for (const column of board.columns) {
+      for (const column of [
+        ...board.columns,
+        ...(board.archive ? [board.archive] : []),
+      ]) {
         if (query.columnId && column.id !== query.columnId) continue;
         for (const card of column.cards) {
           const state = card.checked ? "done" : "active";
           if (query.state && state !== query.state) continue;
           const title = cardTitle(card);
-          if (titleNeedle && !title.toLocaleLowerCase().includes(titleNeedle)) continue;
-          if (pathNeedle && (!card.link || taskPathIdentity(card.link.documentPath) !== pathNeedle)) continue;
+          if (titleNeedle && !title.toLocaleLowerCase().includes(titleNeedle))
+            continue;
+          if (
+            pathNeedle &&
+            (!card.link ||
+              taskPathIdentity(card.link.documentPath) !== pathNeedle)
+          )
+            continue;
           const result: BoardQueryResult = {
             boardId: config.id,
             boardFile: config.file,
             columnHeading: column.heading,
             state,
+            archived: column === board.archive,
             title,
             startOffset: card.startOffset,
-            endOffset: card.endOffset
+            endOffset: card.endOffset,
           };
           if (column.id) result.columnId = column.id;
           if (card.link) {
@@ -148,7 +175,7 @@ export class BoardService {
       const pureInput = {
         columnId: input.columnId,
         taskPath: documentPath,
-        title: input.title
+        title: input.title,
       };
       const checked = input.checked;
       const indentedLines = input.indentedLines;
@@ -157,7 +184,7 @@ export class BoardService {
         ...pureInput,
         ...(checked === undefined ? {} : { checked }),
         ...(indentedLines === undefined ? {} : { indentedLines }),
-        ...(expectedRevision === undefined ? {} : { expectedRevision })
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
       return nextSource;
     });
@@ -174,7 +201,10 @@ export class BoardService {
         ...(input.columnId === undefined ? {} : { columnId: input.columnId }),
         ...(input.checked === undefined ? {} : { checked: input.checked }),
         ...(input.title === undefined ? {} : { title: input.title }),
-        ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision })
+        ...(input.expectedRevision === undefined
+          ? {}
+          : { expectedRevision: input.expectedRevision }),
+        ...(input.archived === undefined ? {} : { archived: input.archived }),
       });
       return nextSource;
     });
@@ -191,9 +221,17 @@ export class BoardService {
     const cardGroups = new Map<string, ReconcileCardReference[]>();
     const linkedTaskPaths = new Set<string>();
 
-    for (const column of board.columns) {
+    for (const column of [
+      ...board.columns,
+      ...(board.archive ? [board.archive] : []),
+    ]) {
       for (const card of column.cards) {
-        const reference = cardReference(config, card, column.id, column.heading);
+        const reference = cardReference(
+          config,
+          card,
+          column.id,
+          column.heading,
+        );
         if (!card.link) {
           broken.push({ card: reference, reason: "unlinked" });
           continue;
@@ -212,7 +250,10 @@ export class BoardService {
 
         let projection: TaskProjection;
         try {
-          projection = parseTaskProjection(documentPath, await this.vault.read(documentPath));
+          projection = parseTaskProjection(
+            documentPath,
+            await this.vault.read(documentPath),
+          );
         } catch {
           broken.push({ card: reference, reason: "unreadable-document" });
           continue;
@@ -221,28 +262,32 @@ export class BoardService {
           broken.push({ card: reference, reason: "not-task-document" });
           continue;
         }
-        if (projection.columnId !== column.id) {
+        if (column !== board.archive && projection.columnId !== column.id) {
           const issue: TypeMismatchIssue = {
             taskPath: documentPath,
-            card: reference
+            card: reference,
           };
           if (column.id) issue.cardColumnId = column.id;
           if (projection.columnId) issue.documentColumnId = projection.columnId;
           typeMismatch.push(issue);
         }
-        if (projection.state === "active" && card.checked) {
+        if (projection.state && !isTerminal(projection.state) && card.checked) {
           statusMismatch.push({
             taskPath: documentPath,
             documentState: projection.state,
             cardChecked: card.checked,
-            card: reference
+            card: reference,
           });
-        } else if (projection.state === "done" && !card.checked) {
+        } else if (
+          projection.state &&
+          isTerminal(projection.state) &&
+          !card.checked
+        ) {
           statusMismatch.push({
             taskPath: documentPath,
             documentState: projection.state,
             cardChecked: card.checked,
-            card: reference
+            card: reference,
           });
         }
       }
@@ -256,17 +301,24 @@ export class BoardService {
     }
 
     const orphan = await this.findOrphans(config, linkedTaskPaths);
-    const configuredHeadings = new Set(config.columns.map((column) => column.heading));
+    const configuredHeadings = new Set(
+      config.columns.map((column) => column.heading),
+    );
     const unresolvedColumns = board.columns
       .filter((column) => !column.id)
       .map((column) => column.heading);
     for (const configured of config.columns) {
-      if (!board.columns.some((column) => column.heading === configured.heading)) {
+      if (
+        !board.columns.some((column) => column.heading === configured.heading)
+      ) {
         unresolvedColumns.push(configured.heading);
       }
     }
     for (const column of board.columns) {
-      if (!configuredHeadings.has(column.heading) && !unresolvedColumns.includes(column.heading)) {
+      if (
+        !configuredHeadings.has(column.heading) &&
+        !unresolvedColumns.includes(column.heading)
+      ) {
         unresolvedColumns.push(column.heading);
       }
     }
@@ -288,46 +340,64 @@ export class BoardService {
         duplicate.length === 0 &&
         typeMismatch.length === 0 &&
         statusMismatch.length === 0 &&
-        unresolvedColumns.length === 0
+        unresolvedColumns.length === 0,
     };
   }
 
-  private async findOrphans(config: BoardConfig, linkedTaskPaths: Set<string>): Promise<OrphanIssue[]> {
-    let files: VaultFileInfo[];
-    try {
-      files = await this.vault.listMarkdownFiles([config.tasksFolder]);
-    } catch {
-      return [];
-    }
+  private async findOrphans(
+    config: BoardConfig,
+    linkedTaskPaths: Set<string>,
+  ): Promise<OrphanIssue[]> {
+    const files = await this.vault.listMarkdownFiles([config.tasksFolder]);
     const issues: OrphanIssue[] = [];
     for (const file of files) {
+      if (file.path.split("/").some((part) => part.endsWith(".assets")))
+        continue;
       let projection: TaskProjection;
       try {
-        projection = parseTaskProjection(file.path, await this.vault.read(file.path));
+        projection = parseTaskProjection(
+          file.path,
+          await this.vault.read(file.path),
+        );
       } catch {
         continue;
       }
-      if (projection.boardId !== config.id || linkedTaskPaths.has(taskPathIdentity(file.path))) continue;
-      const issue: OrphanIssue = { taskPath: file.path, title: projection.title };
+      if (
+        projection.boardId !== config.id ||
+        linkedTaskPaths.has(taskPathIdentity(file.path))
+      )
+        continue;
+      const issue: OrphanIssue = {
+        taskPath: file.path,
+        title: projection.title,
+      };
       if (projection.taskId) issue.taskId = projection.taskId;
       issues.push(issue);
     }
     return issues;
   }
 
-  private mutationResult(config: BoardConfig, taskPath: string, source: string): BoardMutationResult {
+  private mutationResult(
+    config: BoardConfig,
+    taskPath: string,
+    source: string,
+  ): BoardMutationResult {
     const board = parseBoard(source, config);
     const identity = taskPathIdentity(taskPath);
-    const card = board.columns
+    const card = [...board.columns, ...(board.archive ? [board.archive] : [])]
       .flatMap((column) => column.cards)
-      .find((candidate) => candidate.link && taskPathIdentity(candidate.link.documentPath) === identity);
+      .find(
+        (candidate) =>
+          candidate.link &&
+          taskPathIdentity(candidate.link.documentPath) === identity,
+      );
     const result: BoardMutationResult = {
       boardId: config.id,
       boardFile: config.file,
       taskPath,
       checked: card?.checked ?? false,
       hash: board.hash,
-      revision: board.revision
+      revision: board.revision,
     };
     if (card?.columnId) result.columnId = card.columnId;
     return result;
@@ -343,15 +413,21 @@ export class BoardService {
     const boardIds = new Set<string>();
     const boardFiles = new Set<string>();
     for (const board of boards) {
-      if (boardIds.has(board.id)) throw new Error(`Duplicate board id: ${board.id}`);
-      if (boardFiles.has(board.file)) throw new Error(`Board file is configured twice: ${board.file}`);
+      if (boardIds.has(board.id))
+        throw new Error(`Duplicate board id: ${board.id}`);
+      if (boardFiles.has(board.file))
+        throw new Error(`Board file is configured twice: ${board.file}`);
       boardIds.add(board.id);
       boardFiles.add(board.file);
       const columnIds = new Set<string>();
       const headings = new Set<string>();
       for (const column of board.columns) {
-        if (columnIds.has(column.id)) throw new Error(`Duplicate column id in ${board.id}: ${column.id}`);
-        if (headings.has(column.heading)) throw new Error(`Duplicate column heading in ${board.id}: ${column.heading}`);
+        if (columnIds.has(column.id))
+          throw new Error(`Duplicate column id in ${board.id}: ${column.id}`);
+        if (headings.has(column.heading))
+          throw new Error(
+            `Duplicate column heading in ${board.id}: ${column.heading}`,
+          );
         columnIds.add(column.id);
         headings.add(column.heading);
       }
@@ -363,14 +439,14 @@ function cardReference(
   config: BoardConfig,
   card: BoardCard,
   columnId: string | undefined,
-  columnHeading: string
+  columnHeading: string,
 ): ReconcileCardReference {
   const reference: ReconcileCardReference = {
     boardId: config.id,
     boardFile: config.file,
     columnHeading,
     title: cardTitle(card),
-    startOffset: card.startOffset
+    startOffset: card.startOffset,
   };
   if (columnId) reference.columnId = columnId;
   if (card.link) reference.taskPath = taskDocumentPath(card.link.documentPath);
@@ -382,8 +458,11 @@ function cardTitle(card: BoardCard): string {
 }
 
 function parseTaskProjection(path: string, source: string): TaskProjection {
-  const frontmatterMatch = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)\s*(?:\r?\n|$)/.exec(source);
-  const value: unknown = frontmatterMatch?.[1] ? parseYaml(frontmatterMatch[1]) : {};
+  const frontmatterMatch =
+    /^\uFEFF?---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)\s*(?:\r?\n|$)/.exec(source);
+  const value: unknown = frontmatterMatch?.[1]
+    ? parseYaml(frontmatterMatch[1])
+    : {};
   const root = isRecord(value) ? value : {};
   const nested = isRecord(root.taskdoc)
     ? root.taskdoc
@@ -393,13 +472,22 @@ function parseTaskProjection(path: string, source: string): TaskProjection {
   const read = (snake: string, camel: string): unknown =>
     root[snake] ?? root[camel] ?? nested[snake] ?? nested[camel];
   const stateValue = read("state", "state");
-  const state = stateValue === "active" || stateValue === "done" || stateValue === "archived"
-    ? stateValue
-    : undefined;
-  const h1 = /^#(?!#)\s+(.+?)\s*$/m.exec(frontmatterMatch ? source.slice(frontmatterMatch[0].length) : source)?.[1];
+  const state =
+    stateValue === "archived"
+      ? "cancelled"
+      : ["planned", "active", "blocked", "done", "cancelled"].includes(
+            String(stateValue),
+          )
+        ? (stateValue as TaskState)
+        : undefined;
+  const h1 = /^#(?!#)\s+(.+?)\s*$/m.exec(
+    frontmatterMatch ? source.slice(frontmatterMatch[0].length) : source,
+  )?.[1];
   const projection: TaskProjection = {
     path,
-    title: h1?.replace(/\s+#+\s*$/, "").trim() || path.replace(/^.*\//, "").replace(/\.md$/i, "")
+    title:
+      h1?.replace(/\s+#+\s*$/, "").trim() ||
+      path.replace(/^.*\//, "").replace(/\.md$/i, ""),
   };
   const taskId = read("task_id", "taskId");
   const boardId = read("board_id", "boardId");
