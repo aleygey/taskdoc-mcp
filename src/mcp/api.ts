@@ -1,4 +1,11 @@
-import type { BoardConfig, BlockManifest, CheckpointCore, ResumeCapsule, TaskDocument, TaskState } from "../types.js";
+import type {
+  BoardConfig,
+  BlockManifest,
+  CheckpointCore,
+  ResumeCapsule,
+  TaskDocument,
+  TaskState,
+} from "../types.js";
 import type {
   TaskBlockPutInput,
   TaskCardUpdateInput,
@@ -10,33 +17,58 @@ import type {
   TaskQueryInput,
   TaskReadInput,
   TaskResumeInput,
+  TaskUpdateInput,
+  TaskReconcileInput,
 } from "./schemas.js";
 
-export type PhaSyncState = "synced" | "queued" | "failed" | "unbound" | "conflict";
+export type PhaSyncState =
+  | "synced"
+  | "queued"
+  | "failed"
+  | "unbound"
+  | "conflict";
 
 export type MutationResultMeta = {
   document_revision: number;
   document_hash: string;
   pha_sync: PhaSyncState;
   noop?: boolean;
+  warnings?: Array<{ path: string; rule: string; message: string }>;
 };
 
 export type TaskSummary = Pick<
   TaskDocument,
   "taskId" | "boardId" | "columnId" | "title" | "state" | "path" | "revision"
->;
+> &
+  Pick<TaskDocument, "archived" | "typeId">;
 
-export type TaskCheckpointOutline = Pick<CheckpointCore, "id" | "title" | "kind" | "status" | "revision" | "blocks"> & {
+export type TaskCheckpointOutline = Pick<
+  CheckpointCore,
+  "id" | "title" | "kind" | "status" | "revision" | "blocks"
+> & {
   outcome?: string;
 };
 
 export type TaskReadOutline = Pick<
   TaskDocument,
-  "taskId" | "boardId" | "columnId" | "title" | "state" | "objective" | "acceptance" | "revision" | "path"
+  | "taskId"
+  | "boardId"
+  | "columnId"
+  | "title"
+  | "state"
+  | "objective"
+  | "acceptance"
+  | "revision"
+  | "path"
 > & {
   finalOutcome?: string;
   remaining?: string[];
   checkpoints: TaskCheckpointOutline[];
+  acceptanceItems?: import("../types.js").AcceptanceItem[];
+  evidence?: import("../types.js").Evidence[];
+  archived?: boolean;
+  typeId?: string;
+  legacyAcceptanceReview?: boolean;
   next_cursor?: string;
 };
 
@@ -52,19 +84,50 @@ export type TaskQueryItem = {
   state: TaskState;
   path: string;
   revision: number;
+  archived?: boolean;
+  type_id?: string;
+  card?: { column_id?: string; checked: boolean; archived: boolean };
 };
 
 export type TaskQueryOutput = {
   tasks: TaskQueryItem[];
   next_cursor?: string;
+  diagnostics_total?: number;
+  diagnostics_truncated?: boolean;
+  diagnostics?: Array<{ path: string; code: string; message: string }>;
 };
 
 export type TaskResumeOutput = {
-  task: Pick<TaskDocument, "taskId" | "boardId" | "columnId" | "title" | "state" | "objective" | "acceptance" | "revision">;
+  task: Pick<
+    TaskDocument,
+    | "taskId"
+    | "boardId"
+    | "columnId"
+    | "title"
+    | "state"
+    | "objective"
+    | "acceptance"
+    | "revision"
+  >;
   active_checkpoints: CheckpointCore[];
-  completed_outline: Array<Pick<CheckpointCore, "id" | "title" | "status" | "revision"> & { outcome?: string }>;
+  active_checkpoint_details_omitted?: boolean;
+  active_checkpoint_outline?: Array<
+    Pick<CheckpointCore, "id" | "title" | "status" | "revision">
+  >;
+  next_action?: string;
+  completed_outline: Array<
+    Pick<CheckpointCore, "id" | "title" | "status" | "revision"> & {
+      outcome?: string;
+    }
+  >;
   capsule?: ResumeCapsule;
   next_cursor?: string;
+  context?: ReturnType<typeof import("../core/task.js").durableContext>;
+  context_complete?: boolean;
+  context_next_cursor?: string;
+  handoff_status?: "missing" | "current" | "stale";
+  acceptance_items?: import("../types.js").AcceptanceItem[];
+  evidence?: import("../types.js").Evidence[];
 };
 
 export type TaskReadOutput = {
@@ -80,9 +143,19 @@ export type TaskReadOutput = {
 
 export type TaskCreateOutput = MutationResultMeta & { task: TaskDocument };
 export type TaskCardUpdateOutput = MutationResultMeta & { task: TaskSummary };
-export type TaskCheckpointCommitOutput = MutationResultMeta & { task_id: string; checkpoint: CheckpointCore };
-export type TaskBlockPutOutput = MutationResultMeta & { task_id: string; checkpoint_id: string; block: BlockManifest };
-export type TaskHandoffOutput = MutationResultMeta & { task_id: string; capsule: ResumeCapsule };
+export type TaskCheckpointCommitOutput = MutationResultMeta & {
+  task_id: string;
+  checkpoint: CheckpointCore;
+};
+export type TaskBlockPutOutput = MutationResultMeta & {
+  task_id: string;
+  checkpoint_id: string;
+  block: BlockManifest;
+};
+export type TaskHandoffOutput = MutationResultMeta & {
+  task_id: string;
+  capsule: ResumeCapsule;
+};
 export type TaskFinalizeOutput = MutationResultMeta & { task: TaskSummary };
 
 export interface TaskApi {
@@ -92,11 +165,25 @@ export interface TaskApi {
   read(input: TaskReadInput): Promise<TaskReadOutput>;
   create(input: TaskCreateInput): Promise<TaskCreateOutput>;
   cardUpdate(input: TaskCardUpdateInput): Promise<TaskCardUpdateOutput>;
-  checkpointCommit(input: TaskCheckpointCommitInput): Promise<TaskCheckpointCommitOutput>;
+  checkpointCommit(
+    input: TaskCheckpointCommitInput,
+  ): Promise<TaskCheckpointCommitOutput>;
   blockPut(input: TaskBlockPutInput): Promise<TaskBlockPutOutput>;
   handoff(input: TaskHandoffInput): Promise<TaskHandoffOutput>;
   finalize(input: TaskFinalizeInput): Promise<TaskFinalizeOutput>;
+  update(input: TaskUpdateInput): Promise<TaskCreateOutput>;
+  reconcile(input: TaskReconcileInput): Promise<TaskReconcileOutput>;
 }
+
+export type TaskReconcileOutput = {
+  task_id: string;
+  document_revision: number;
+  board_revision: number;
+  direction: "document_to_board" | "board_to_document";
+  changes: string[];
+  can_apply: boolean;
+  applied: boolean;
+};
 
 export const taskApiErrorCodes = [
   "INVALID_INPUT",
@@ -104,6 +191,8 @@ export const taskApiErrorCodes = [
   "CHECKPOINT_NOT_FOUND",
   "VERSION_CONFLICT",
   "IDEMPOTENCY_CONFLICT",
+  "IDEMPOTENCY_EXPIRED",
+  "RECOVERY_REQUIRED",
   "QUALITY_REJECTED",
   "DOCUMENT_CONFLICT",
   "DOCUMENT_MALFORMED",
@@ -114,7 +203,12 @@ export const taskApiErrorCodes = [
 ] as const;
 
 export type TaskApiErrorCode = (typeof taskApiErrorCodes)[number];
-export type TaskApiErrorAction = "revise_input" | "reread" | "retry_same_request" | "configure_plugin" | "none";
+export type TaskApiErrorAction =
+  | "revise_input"
+  | "reread"
+  | "retry_same_request"
+  | "configure_plugin"
+  | "none";
 
 export type TaskApiErrorIssue = {
   path: string;
@@ -137,8 +231,15 @@ export class TaskApiError extends Error {
   readonly issues: TaskApiErrorIssue[] | undefined;
   readonly details: Record<string, unknown> | undefined;
 
-  constructor(code: TaskApiErrorCode, message: string, options: TaskApiErrorOptions = {}) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+  constructor(
+    code: TaskApiErrorCode,
+    message: string,
+    options: TaskApiErrorOptions = {},
+  ) {
+    super(
+      message,
+      options.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.name = "TaskApiError";
     this.code = code;
     this.action = options.action;

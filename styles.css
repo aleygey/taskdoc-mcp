@@ -16,3 +16,10 @@
   margin-top: 0.75rem;
   padding-top: 0.75rem;
 }
+
+.taskdoc-mcp-preview {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

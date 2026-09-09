@@ -1,7 +1,24 @@
-export type TaskState = "active" | "done" | "archived";
-export type CheckpointStatus = "active" | "blocked" | "done" | "cancelled" | "superseded";
-export type CheckpointKind = "analysis" | "decision" | "implementation" | "incident" | "operation";
-export type EvidenceType = "test" | "artifact" | "observation" | "source" | "user_acceptance";
+export type TaskState = "planned" | "active" | "blocked" | "done" | "cancelled";
+export const isTerminal = (state: TaskState): boolean =>
+  state === "done" || state === "cancelled";
+export type CheckpointStatus =
+  | "active"
+  | "blocked"
+  | "done"
+  | "cancelled"
+  | "superseded";
+export type CheckpointKind =
+  | "analysis"
+  | "decision"
+  | "implementation"
+  | "incident"
+  | "operation";
+export type EvidenceType =
+  | "test"
+  | "artifact"
+  | "observation"
+  | "source"
+  | "user_acceptance";
 export type BlockKind =
   | "data_table"
   | "mermaid"
@@ -16,6 +33,7 @@ export interface AcceptanceItem {
   statement: string;
   status: "pending" | "verified" | "waived";
   evidenceRefs?: string[];
+  waiverReason?: string;
 }
 
 export interface Finding {
@@ -82,8 +100,11 @@ export interface CheckpointCore {
 }
 
 export interface ResumeCapsule {
-  focusCheckpointId: string;
+  focusCheckpointId?: string;
   basedOnRevision: number;
+  stale?: boolean;
+  staleReason?: string;
+  pendingChecks?: string[];
   lastVerified?: string;
   nextAction: string;
   blockers: Array<{ statement: string; unblockWhen: string }>;
@@ -101,16 +122,24 @@ export interface ResumeCapsule {
 }
 
 export interface TaskDocument {
-  schema: "checkpoint/v1";
+  schema: "checkpoint/v1" | "checkpoint/v2";
   taskId: string;
   boardId: string;
   columnId: string;
+  typeId?: string;
   title: string;
   state: TaskState;
+  archived?: boolean;
+  blocker?: string;
+  unblockCondition?: string;
   createdAt: string;
   updatedAt: string;
   objective: string;
   acceptance: string[];
+  acceptanceItems?: AcceptanceItem[];
+  evidence?: Evidence[];
+  amendments?: Array<{ at: string; reason: string; fields: string[] }>;
+  legacyAcceptanceReview?: boolean;
   finalOutcome?: string;
   finalEvidence?: Evidence[];
   remaining?: string[];
@@ -121,13 +150,21 @@ export interface TaskDocument {
   revision: number;
 }
 
-export type ValidationProfile = "bug" | "feature" | "research" | "migration" | "configuration" | "maintenance" | "other";
+export type ValidationProfile =
+  | "bug"
+  | "feature"
+  | "research"
+  | "migration"
+  | "configuration"
+  | "maintenance"
+  | "other";
 
 export interface BoardColumnConfig {
   id: string;
   heading: string;
   typeId: string;
   profile: ValidationProfile;
+  state?: TaskState;
 }
 
 export interface BoardConfig {
@@ -139,6 +176,8 @@ export interface BoardConfig {
   defaultColumnId?: string;
   autoConvertCards: boolean;
   columns: BoardColumnConfig[];
+  columnMode?: "type" | "state";
+  taskTypes?: Array<{ id: string; name: string; profile: ValidationProfile }>;
 }
 
 export interface PhaSettings {
@@ -169,7 +208,15 @@ export interface VaultFileInfo {
   basename: string;
 }
 
-export type VaultOperation = "exists" | "read" | "create" | "write" | "delete" | "process" | "list" | "mkdir";
+export type VaultOperation =
+  | "exists"
+  | "read"
+  | "create"
+  | "write"
+  | "delete"
+  | "process"
+  | "list"
+  | "mkdir";
 
 export class VaultIoError extends Error {
   readonly code: "IO_BUSY" | "IO_ERROR";
@@ -179,7 +226,7 @@ export class VaultIoError extends Error {
     readonly operation: VaultOperation,
     readonly path: string,
     cause: unknown,
-    retryable = looksTransient(cause)
+    retryable = looksTransient(cause),
   ) {
     super(`Vault ${operation} operation failed`, { cause });
     this.name = "VaultIoError";
@@ -200,9 +247,15 @@ export interface VaultAdapter {
 }
 
 function looksTransient(error: unknown): boolean {
-  const record = typeof error === "object" && error !== null ? error as { code?: unknown; message?: unknown } : {};
+  const record =
+    typeof error === "object" && error !== null
+      ? (error as { code?: unknown; message?: unknown })
+      : {};
   const code = typeof record.code === "string" ? record.code.toUpperCase() : "";
-  const message = typeof record.message === "string" ? record.message.toUpperCase() : "";
-  return ["EBUSY", "EAGAIN", "EMFILE", "ENFILE", "ETXTBSY"].includes(code) ||
-    /\b(?:EBUSY|EAGAIN|EMFILE|ENFILE|ETXTBSY)\b/.test(message);
+  const message =
+    typeof record.message === "string" ? record.message.toUpperCase() : "";
+  return (
+    ["EBUSY", "EAGAIN", "EMFILE", "ENFILE", "ETXTBSY"].includes(code) ||
+    /\b(?:EBUSY|EAGAIN|EMFILE|ENFILE|ETXTBSY)\b/.test(message)
+  );
 }
